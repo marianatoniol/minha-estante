@@ -584,7 +584,7 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
               placeholder="Nome do livro ou autor..."
               style={{ flex: 1, padding: "10px 14px", borderRadius: 10, background: "#f5f5f5", border: "none", fontSize: 14, outline: "none" }}
             />
-            <button onClick={doSearch} disabled={loading} style={{
+            <button onClick={() => doSearch()} disabled={loading} style={{
               padding: "10px 18px", borderRadius: 10, background: "#534AB7", color: "white",
               border: "none", fontSize: 14, fontWeight: 500, cursor: "pointer", opacity: loading ? 0.6 : 1,
             }}>{loading ? "..." : "Buscar"}</button>
