@@ -496,7 +496,7 @@ function HomeScreen({ books, loading, onSelectBook, onSearch, statusFilter, setS
 // ─── Add Book Screen ──────────────────────────────────────────────────────────
 
 function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
-  const [query, setQuery] = useState(initialQuery || "");
+  const [query, setQuery] = useState(typeof initialQuery === "string" ? initialQuery : "");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(null);
@@ -508,8 +508,9 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
   const myBookIds = new Set(myBooks.map(b => b.googleId));
 
   const doSearch = async (q) => {
-    const term = (q || query).trim();
-    if (!term) return;
+    const raw = q || query;
+    if (!raw || typeof raw !== "string" || !raw.trim()) return;
+    const term = raw.trim();
     setLoading(true);
     setSelected(null);
     setClassification(null);
