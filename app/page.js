@@ -403,7 +403,7 @@ function BottomNav({ active, onNavigate }) {
 
 // ─── Home Screen ──────────────────────────────────────────────────────────────
 
-function HomeScreen({ books, loading, onSelectBook, onAdd, statusFilter, setStatusFilter }) {
+function HomeScreen({ books, loading, onSelectBook, onSearch, statusFilter, setStatusFilter }) {
   const [search, setSearch] = useState("");
   const filtered = books.filter(b => {
     if (statusFilter && b.status !== statusFilter) return false;
@@ -415,27 +415,28 @@ function HomeScreen({ books, loading, onSelectBook, onAdd, statusFilter, setStat
     return true;
   });
 
+  const handleSearch = () => { if (search.trim()) onSearch(search.trim()); };
+
   return (
     <div style={{ paddingBottom: 8 }}>
-      <div style={{ padding: "0 20px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h1 style={{ fontSize: 24, fontWeight: 600, letterSpacing: -0.5 }}>Minha estante</h1>
-        <div onClick={onAdd} style={{
-          width: 38, height: 38, borderRadius: "50%", background: "#534AB7",
-          display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-        }}>
-          <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={2.5} strokeLinecap="round">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
+      <div style={{ padding: "0 20px 14px" }}>
+        <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: -0.5, marginBottom: 12 }}>O que você quer ler hoje?</h1>
+        <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ flex: 1, position: "relative" }}>
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth={2} style={{ position: "absolute", left: 12, top: 11 }}>
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleSearch()}
+              placeholder="Buscar por titulo, autor ou trope..."
+              style={{ width: "100%", padding: "10px 14px 10px 36px", borderRadius: 10, background: "#f5f5f5", border: "none", fontSize: 14, outline: "none" }}
+            />
+          </div>
+          <button onClick={handleSearch} style={{
+            padding: "10px 18px", borderRadius: 10, background: "#534AB7", color: "white",
+            border: "none", fontSize: 14, fontWeight: 500, cursor: "pointer",
+          }}>Buscar</button>
         </div>
-      </div>
-      <div style={{ margin: "0 20px 14px", position: "relative" }}>
-        <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth={2} style={{ position: "absolute", left: 12, top: 11 }}>
-          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-        <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Buscar por titulo, autor ou trope..."
-          style={{ width: "100%", padding: "10px 14px 10px 36px", borderRadius: 10, background: "#f5f5f5", border: "none", fontSize: 14, outline: "none" }}
-        />
       </div>
       <div style={{ display: "flex", gap: 8, padding: "0 20px 14px", overflowX: "auto" }}>
         {[{ key: "", label: "Todos" }, { key: "lendo", label: "Lendo" }, { key: "quero ler", label: "Quero ler" }, { key: "lido", label: "Lido" }].map(f => (
@@ -494,8 +495,8 @@ function HomeScreen({ books, loading, onSelectBook, onAdd, statusFilter, setStat
 
 // ─── Add Book Screen ──────────────────────────────────────────────────────────
 
-function AddBookScreen({ onBack, onSave, myBooks }) {
-  const [query, setQuery] = useState("");
+function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
+  const [query, setQuery] = useState(initialQuery || "");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(null);
@@ -506,15 +507,20 @@ function AddBookScreen({ onBack, onSave, myBooks }) {
 
   const myBookIds = new Set(myBooks.map(b => b.googleId));
 
-  const doSearch = async () => {
-    if (!query.trim()) return;
+  const doSearch = async (q) => {
+    const term = (q || query).trim();
+    if (!term) return;
     setLoading(true);
     setSelected(null);
     setClassification(null);
-    const r = await searchGoogleBooks(query);
+    const r = await searchGoogleBooks(term);
     setResults(r);
     setLoading(false);
   };
+
+  useEffect(() => {
+    if (initialQuery) doSearch(initialQuery);
+  }, []);
 
   const openBook = async (book) => {
     setSelected(book);
@@ -1089,6 +1095,7 @@ export default function App() {
   const [screen, setScreen] = useState("home");
   const [selectedBook, setSelectedBook] = useState(null);
   const [statusFilter, setStatusFilter] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -1127,12 +1134,12 @@ export default function App() {
         {screen === "home" && (
           <HomeScreen books={books} loading={loadingBooks}
             onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }}
-            onAdd={() => setScreen("add")}
+            onSearch={(q) => { setSearchQuery(q); setScreen("add"); }}
             statusFilter={statusFilter} setStatusFilter={setStatusFilter}
           />
         )}
         {screen === "add" && (
-          <AddBookScreen onBack={() => setScreen("home")} onSave={addBook} myBooks={books} />
+          <AddBookScreen onBack={() => { setSearchQuery(""); setScreen("home"); }} onSave={addBook} myBooks={books} initialQuery={searchQuery} />
         )}
         {screen === "detail" && selectedBook && (
           <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")} onUpdate={updateBook} onDelete={deleteBook} />
