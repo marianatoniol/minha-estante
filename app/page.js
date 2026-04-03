@@ -185,6 +185,18 @@ async function searchGoogleBooks(query) {
     const deduped = [...byIsbn.values(), ...byTitleAuthor.values()];
 
     const nq = query.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const stopwords = new Set(["de","do","da","dos","das","e","o","a","os","as","em","por","para","com","um","uma","the","of","and","in","to","a"]);
+    const queryWords = nq.split(/\s+/).filter(w => w.length > 3 && !stopwords.has(w));
+
+    // Detecta se algum resultado tem autor que bate com palavra da query
+    const authorMatchWords = new Set();
+    for (const book of deduped) {
+      const na = book.authors.join(" ").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      for (const w of queryWords) {
+        if (na.includes(w)) authorMatchWords.add(w);
+      }
+    }
+
     const score = book => {
       const nt = book.title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       const na = book.authors.join(" ").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -194,9 +206,10 @@ async function searchGoogleBooks(query) {
       else if (nt.includes(nq)) s += 20;
       else if (na.includes(nq)) s += 10;
       // Penaliza livros "sobre" o tema que não são o livro em si
-      const queryWords = nq.split(/\s+/).filter(w => w.length > 2);
       const authorHasQuery = queryWords.some(w => na.includes(w));
       if (!authorHasQuery && nt.includes(nq) && nt !== nq && !nt.startsWith(nq)) s -= 15;
+      // Penaliza resultados cujo autor não bate com palavras de autor detectadas na query
+      if (authorMatchWords.size > 0 && ![...authorMatchWords].some(w => na.includes(w))) s -= 10;
       if (book.isPt) s += 8;
       if (book.cover) s += 5;
       if (book.description.length > 100) s += 3;
