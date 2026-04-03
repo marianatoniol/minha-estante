@@ -249,7 +249,18 @@ async function searchGoogleBooks(query) {
           .then(r => r.json())
           .then(({ is_spam, quality_score }) =>
             supabase.from("books_catalog").upsert(
-              { google_id: book.googleId, quality_checked: true, is_spam: is_spam ?? false, quality_score: quality_score ?? 5 },
+              {
+                google_id: book.googleId,
+                title: book.title,
+                authors: JSON.stringify(book.authors),
+                description: book.description || null,
+                cover: book.cover || null,
+                published_date: book.publishedDate || null,
+                page_count: book.pageCount || 0,
+                quality_checked: true,
+                is_spam: is_spam ?? false,
+                quality_score: quality_score ?? 5,
+              },
               { onConflict: "google_id" }
             ).then(({ error }) => { if (error) console.error("quality upsert error:", error); })
           )
