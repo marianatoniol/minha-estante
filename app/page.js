@@ -134,7 +134,7 @@ async function saveCatalogEntry(googleId, bookData, classification) {
 
 async function searchGoogleBooks(query) {
   try {
-    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&langRestrict=pt&maxResults=8`);
+    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&langRestrict=pt&maxResults=8&key=${process.env.NEXT_PUBLIC_GOOGLE_BOOKS_API_KEY}`);
     const data = await res.json();
     if (!data.items) return [];
     const seen = new Set();
