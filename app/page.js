@@ -130,13 +130,18 @@ async function saveCatalogEntry(googleId, bookData, classification) {
 
 async function searchGoogleBooks(query) {
   try {
-    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15&key=${process.env.NEXT_PUBLIC_GOOGLE_BOOKS_API_KEY}`);
-    const data = await res.json();
-    if (!data.items) return [];
+    const key = process.env.NEXT_PUBLIC_GOOGLE_BOOKS_API_KEY;
+    const base = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&key=${key}`;
+
+    const [resPt, resAll] = await Promise.all([
+      fetch(`${base}&langRestrict=pt&maxResults=10`),
+      fetch(`${base}&maxResults=10`),
+    ]);
+    const [dataPt, dataAll] = await Promise.all([resPt.json(), resAll.json()]);
 
     const normalize = str => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s/g, "");
 
-    const books = data.items.map(item => {
+    const parseItems = (items, isPt) => (items || []).map(item => {
       const v = item.volumeInfo;
       const isbn13 = v.industryIdentifiers?.find(i => i.type === "ISBN_13")?.identifier || null;
       return {
@@ -148,19 +153,34 @@ async function searchGoogleBooks(query) {
         publishedDate: v.publishedDate || "",
         pageCount: v.pageCount || 0,
         isbn: isbn13,
+        isPt: isPt || ["pt", "pt-BR"].includes(v.language),
       };
     });
 
-    // Filtra menos de 50 páginas
-    const filtered = books.filter(b => b.pageCount >= 50);
+    const all = [...parseItems(dataPt.items, true), ...parseItems(dataAll.items, false)];
 
-    // Agrupa por ISBN-13 ou título+autor normalizado, mantém o de mais páginas
-    const groups = new Map();
+    // Filtra menos de 50 páginas
+    const filtered = all.filter(b => b.pageCount >= 50);
+
+    // Deduplicação dupla: primeiro por ISBN-13, depois por título+autor normalizado
+    const byIsbn = new Map();
+    const byTitleAuthor = new Map();
     for (const book of filtered) {
-      const key = book.isbn || normalize(book.title + (book.authors[0] || ""));
-      const existing = groups.get(key);
-      if (!existing || book.pageCount > existing.pageCount) groups.set(key, book);
+      if (book.isbn) {
+        const existing = byIsbn.get(book.isbn);
+        if (!existing || book.pageCount > existing.pageCount) byIsbn.set(book.isbn, book);
+      } else {
+        const taKey = normalize(book.title + (book.authors[0] || ""));
+        const existing = byTitleAuthor.get(taKey);
+        if (!existing || book.pageCount > existing.pageCount) byTitleAuthor.set(taKey, book);
+      }
     }
+    // Remove do byTitleAuthor entradas que duplicam um ISBN já presente
+    for (const book of byIsbn.values()) {
+      const taKey = normalize(book.title + (book.authors[0] || ""));
+      byTitleAuthor.delete(taKey);
+    }
+    const deduped = [...byIsbn.values(), ...byTitleAuthor.values()];
 
     const nq = query.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     const score = book => {
@@ -171,14 +191,13 @@ async function searchGoogleBooks(query) {
       else if (nt.startsWith(nq)) s += 30;
       else if (nt.includes(nq)) s += 20;
       else if (na.includes(nq)) s += 10;
+      if (book.isPt) s += 8;
       if (book.cover) s += 5;
       if (book.description.length > 100) s += 3;
       return s;
     };
 
-    return [...groups.values()]
-      .sort((a, b) => score(b) - score(a))
-      .slice(0, 15);
+    return deduped.sort((a, b) => score(b) - score(a)).slice(0, 15);
   } catch { return []; }
 }
 
