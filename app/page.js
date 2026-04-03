@@ -12,10 +12,6 @@ const TROPES_LIST = [
   "realismo magico","viagem no tempo","recontagem de mito"
 ];
 
-const GENRES = [
-  "romantasia","fantasia","romance","ficcao cientifica","thriller",
-  "misterio","ficcao historica","ficcao contemporanea","horror","young adult"
-];
 
 const STATUS_COLORS = { lendo: "#639922", "quero ler": "#378ADD", lido: "#888780" };
 const STATUS_LABELS = { lendo: "Lendo", "quero ler": "Quero ler", lido: "Lido" };
@@ -162,36 +158,14 @@ async function searchGoogleBooks(query) {
 
 // ─── Claude AI ────────────────────────────────────────────────────────────────
 
-async function classifyWithAI(apiKey, title, authors, description) {
+async function classifyWithAI(title, authors, description) {
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch("/api/classify", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-dangerous-direct-browser-access": "true"
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1000,
-        messages: [{ role: "user", content: `Classifique este livro em tropes e generos literarios.
-
-Titulo: ${title}
-Autor(es): ${authors}
-Sinopse: ${description}
-
-Responda APENAS com JSON valido, sem markdown, sem crases, neste formato exato:
-{"genres":["genero1","genero2"],"tropes":["trope1","trope2","trope3"],"summary":"resumo de 1 frase do livro em portugues"}
-
-Use apenas generos desta lista: ${GENRES.join(", ")}
-Use apenas tropes desta lista: ${TROPES_LIST.join(", ")}
-Selecione de 1 a 3 generos e de 2 a 5 tropes que melhor descrevem o livro.` }],
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, authors, description }),
     });
-    const data = await res.json();
-    const text = data.content?.[0]?.text || "";
-    const clean = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(clean);
+    return await res.json();
   } catch(e) {
     console.error("AI classification error:", e);
     return { genres: [], tropes: [], summary: "" };
@@ -390,7 +364,7 @@ function HomeScreen({ books, loading, onSelectBook, onAdd, statusFilter, setStat
 
 // ─── Add Book Screen ──────────────────────────────────────────────────────────
 
-function AddBookScreen({ onBack, onSave, apiKey, myBooks }) {
+function AddBookScreen({ onBack, onSave, myBooks }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -425,13 +399,9 @@ function AddBookScreen({ onBack, onSave, apiKey, myBooks }) {
       return;
     }
 
-    if (apiKey) {
-      const result = await classifyWithAI(apiKey, book.title, book.authors.join(", "), book.description);
-      await saveCatalogEntry(book.googleId, book, result);
-      setClassification(result);
-    } else {
-      setClassification({ genres: [], tropes: [], summary: "" });
-    }
+    const result = await classifyWithAI(book.title, book.authors.join(", "), book.description);
+    await saveCatalogEntry(book.googleId, book, result);
+    setClassification(result);
   };
 
   const doSave = async () => {
@@ -552,7 +522,6 @@ function AddBookScreen({ onBack, onSave, apiKey, myBooks }) {
                 {classification.summary && (
                   <div style={{ fontSize: 12, color: "#666", fontStyle: "italic", lineHeight: 1.5 }}>{classification.summary}</div>
                 )}
-                {!apiKey && <div style={{ fontSize: 12, color: "#999" }}>Configure sua API key em Config para classificar automaticamente.</div>}
               </>
             )}
           </div>
@@ -928,20 +897,7 @@ function RecoScreen({ books, onSelectBook }) {
 
 // ─── Config Screen ────────────────────────────────────────────────────────────
 
-function ConfigScreen({ apiKey, setApiKey }) {
-  const [input, setInput] = useState(apiKey);
-  const [saved, setSaved] = useState(false);
-  const [showKey, setShowKey] = useState(false);
-
-  const handleSave = () => {
-    setApiKey(input);
-    if (typeof window !== "undefined") localStorage.setItem("minha-estante-api-key", input);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
-  const maskedValue = input ? input.slice(0, 7) + "•".repeat(Math.max(0, input.length - 11)) + input.slice(-4) : "";
-
+function ConfigScreen() {
   return (
     <div style={{ paddingBottom: 20 }}>
       <div style={{ padding: "0 20px 16px", display: "flex", alignItems: "center", gap: 10 }}>
@@ -953,37 +909,6 @@ function ConfigScreen({ apiKey, setApiKey }) {
       </div>
 
       <div style={{ padding: "0 20px" }}>
-        <div style={{ padding: 16, borderRadius: 12, background: "#f5f5f5", marginBottom: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Chave da API Anthropic</div>
-          <div style={{ fontSize: 12, color: "#666", marginBottom: 12, lineHeight: 1.5 }}>
-            Necessaria pra classificar livros automaticamente por tropes usando IA. Sua chave fica salva apenas no seu dispositivo.
-          </div>
-          <textarea
-            value={showKey ? input : maskedValue}
-            onChange={e => { if (showKey) setInput(e.target.value); }}
-            onFocus={() => setShowKey(true)}
-            placeholder="Cole sua chave aqui (sk-ant-...)"
-            rows={3}
-            style={{
-              width: "100%", padding: "12px 14px", borderRadius: 10, background: "#fff",
-              border: "0.5px solid #ddd", fontSize: 13, outline: "none", resize: "none",
-              fontFamily: "monospace", lineHeight: 1.5, wordBreak: "break-all", marginBottom: 8,
-            }}
-          />
-          <div onClick={() => setShowKey(!showKey)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, color: "#534AB7", marginBottom: 12 }}>
-            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
-              {showKey
-                ? <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
-                : <><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></>
-              }
-            </svg>
-            {showKey ? "Esconder chave" : "Mostrar chave"}
-          </div>
-          <button onClick={handleSave} style={{
-            width: "100%", padding: "12px", borderRadius: 10, border: "none",
-            background: saved ? "#639922" : "#534AB7", color: "white", fontSize: 14, fontWeight: 500, cursor: "pointer",
-          }}>{saved ? "Salvo!" : "Salvar chave"}</button>
-        </div>
 
         <div style={{ padding: 16, borderRadius: 12, background: "#f5f5f5", marginBottom: 16 }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Sobre o app</div>
@@ -1017,9 +942,6 @@ export default function App() {
   const [screen, setScreen] = useState("home");
   const [selectedBook, setSelectedBook] = useState(null);
   const [statusFilter, setStatusFilter] = useState("");
-  const [apiKey, setApiKey] = useState(() =>
-    typeof window !== "undefined" ? localStorage.getItem("minha-estante-api-key") || "" : ""
-  );
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -1063,14 +985,14 @@ export default function App() {
           />
         )}
         {screen === "add" && (
-          <AddBookScreen onBack={() => setScreen("home")} onSave={addBook} apiKey={apiKey} myBooks={books} />
+          <AddBookScreen onBack={() => setScreen("home")} onSave={addBook} myBooks={books} />
         )}
         {screen === "detail" && selectedBook && (
           <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")} onUpdate={updateBook} onDelete={deleteBook} />
         )}
         {screen === "explore" && <ExploreScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
         {screen === "reco" && <RecoScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
-        {screen === "config" && <ConfigScreen apiKey={apiKey} setApiKey={setApiKey} />}
+        {screen === "config" && <ConfigScreen />}
       </div>
       <BottomNav active={activeTab} onNavigate={navigate} />
     </div>
