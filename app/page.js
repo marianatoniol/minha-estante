@@ -528,9 +528,10 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
     setClassification(null);
 
     const cached = await getCatalogEntry(book.googleId);
-    if (cached) {
+    const genres = cached ? JSON.parse(cached.genres || "[]") : [];
+    if (cached && genres.length > 0) {
       setClassification({
-        genres: JSON.parse(cached.genres || "[]"),
+        genres,
         tropes: JSON.parse(cached.tropes || "[]"),
         summary: cached.summary || "",
       });
