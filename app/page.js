@@ -732,6 +732,23 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
   const [customTropes, setCustomTropes] = useState(book.tropes || []);
   const [showAllTropes, setShowAllTropes] = useState(false);
 
+  useEffect(() => {
+    if (book.genres && book.genres.length > 0) return;
+    if (!book.googleId) return;
+
+    (async () => {
+      const cached = await getCatalogEntry(book.googleId);
+      const genres = cached ? JSON.parse(cached.genres || "[]") : [];
+      if (genres.length > 0) {
+        onUpdate({ ...book, genres, tropes: JSON.parse(cached.tropes || "[]"), summary: cached.summary || "" });
+        return;
+      }
+      const result = await classifyWithAI(book.title, book.authors.join(", "), book.description);
+      await saveCatalogEntry(book.googleId, book, result);
+      onUpdate({ ...book, genres: result.genres || [], tropes: result.tropes || [], summary: result.summary || "" });
+    })();
+  }, [book.id]);
+
   const handleSave = () => {
     onUpdate({ ...book, status, rating, tropes: customTropes });
     setEditing(false);
