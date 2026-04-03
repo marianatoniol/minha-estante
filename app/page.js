@@ -144,11 +144,11 @@ async function saveCatalogEntry(googleId, bookData, classification) {
 async function searchGoogleBooks(query) {
   try {
     const key = process.env.NEXT_PUBLIC_GOOGLE_BOOKS_API_KEY;
-    const base = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&key=${key}`;
+    const base = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent("intitle:" + query)}&key=${key}`;
 
     const [resPt, resAll] = await Promise.all([
-      fetch(`${base}&langRestrict=pt&maxResults=10`),
-      fetch(`${base}&maxResults=10`),
+      fetch(`${base}&langRestrict=pt&maxResults=20`),
+      fetch(`${base}&maxResults=20`),
     ]);
     const [dataPt, dataAll] = await Promise.all([resPt.json(), resAll.json()]);
 
