@@ -39,7 +39,7 @@ function getGradient(title) {
   return COVER_GRADIENTS[Math.abs(hash) % COVER_GRADIENTS.length];
 }
 
-// ─── Supabase helpers ─────────────────────────────────────────────────────────
+// ─── Supabase: estante pessoal ────────────────────────────────────────────────
 
 function toDb(book) {
   return {
@@ -80,10 +80,7 @@ function fromDb(row) {
 }
 
 async function fetchBooks() {
-  const { data, error } = await supabase
-    .from("books")
-    .select("*")
-    .order("added_at", { ascending: false });
+  const { data, error } = await supabase.from("books").select("*").order("added_at", { ascending: false });
   if (error) { console.error("fetchBooks error:", error); return []; }
   return data.map(fromDb);
 }
@@ -103,26 +100,63 @@ async function deleteBookFromDb(id) {
   if (error) console.error("deleteBook error:", error);
 }
 
-// ─── Google Books ──────────────────────────────────────────────────────────────
+// ─── Supabase: catálogo global ────────────────────────────────────────────────
+
+async function getCatalogEntry(googleId) {
+  const { data, error } = await supabase
+    .from("books_catalog")
+    .select("*")
+    .eq("google_id", googleId)
+    .single();
+  if (error) return null;
+  return data;
+}
+
+async function saveCatalogEntry(googleId, bookData, classification) {
+  const entry = {
+    google_id: googleId,
+    title: bookData.title,
+    authors: JSON.stringify(bookData.authors),
+    description: bookData.description || null,
+    cover: bookData.cover || null,
+    published_date: bookData.publishedDate || null,
+    page_count: bookData.pageCount || 0,
+    genres: JSON.stringify(classification.genres || []),
+    tropes: JSON.stringify(classification.tropes || []),
+    summary: classification.summary || null,
+    classified_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from("books_catalog").upsert(entry, { onConflict: "google_id" });
+  if (error) console.error("saveCatalogEntry error:", error);
+}
+
+// ─── Google Books ─────────────────────────────────────────────────────────────
 
 async function searchGoogleBooks(query) {
   try {
-    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&langRestrict=pt&maxResults=5`);
+    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&langRestrict=pt&maxResults=8`);
     const data = await res.json();
     if (!data.items) return [];
-    return data.items.map(item => {
-      const v = item.volumeInfo;
-      return {
-        googleId: item.id,
-        title: v.title || "",
-        authors: v.authors || [],
-        description: v.description || "",
-        cover: v.imageLinks?.thumbnail?.replace("http:", "https:") || null,
-        publishedDate: v.publishedDate || "",
-        pageCount: v.pageCount || 0,
-        categories: v.categories || [],
-      };
-    });
+    const seen = new Set();
+    return data.items
+      .map(item => {
+        const v = item.volumeInfo;
+        return {
+          googleId: item.id,
+          title: v.title || "",
+          authors: v.authors || [],
+          description: v.description || "",
+          cover: v.imageLinks?.thumbnail?.replace("http:", "https:") || null,
+          publishedDate: v.publishedDate || "",
+          pageCount: v.pageCount || 0,
+        };
+      })
+      .filter(book => {
+        const key = (book.title + (book.authors[0] || "")).toLowerCase().replace(/\s/g, "");
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
   } catch { return []; }
 }
 
@@ -132,7 +166,11 @@ async function classifyWithAI(apiKey, title, authors, description) {
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-dangerous-direct-browser-access": "true" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
         max_tokens: 1000,
@@ -160,27 +198,7 @@ Selecione de 1 a 3 generos e de 2 a 5 tropes que melhor descrevem o livro.` }],
   }
 }
 
-// ─── UI Components ────────────────────────────────────────────────────────────
-
-function TagPill({ label, color = "purple" }) {
-  const colors = {
-    purple: { bg: "#EEEDFE", text: "#3C3489" },
-    pink: { bg: "#FBEAF0", text: "#72243E" },
-    coral: { bg: "#FAECE7", text: "#712B13" },
-    teal: { bg: "#E1F5EE", text: "#085041" },
-    amber: { bg: "#FAEEDA", text: "#633806" },
-    blue: { bg: "#E6F1FB", text: "#0C447C" },
-    gray: { bg: "#F1EFE8", text: "#444441" },
-    green: { bg: "#EAF3DE", text: "#27500A" },
-    red: { bg: "#FCEBEB", text: "#791F1F" },
-  };
-  const c = colors[color] || colors.purple;
-  return (
-    <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 12, background: c.bg, color: c.text, whiteSpace: "nowrap" }}>
-      {label}
-    </span>
-  );
-}
+// ─── UI Helpers ───────────────────────────────────────────────────────────────
 
 const TROPE_COLORS = {
   "enemies to lovers": "pink", "slow burn": "pink", "forced proximity": "coral",
@@ -202,6 +220,26 @@ const GENRE_COLORS = {
   "ficcao contemporanea": "teal", horror: "red", "young adult": "coral",
 };
 
+const TAG_COLOR_STYLES = {
+  purple: { bg: "#EEEDFE", text: "#3C3489" },
+  pink: { bg: "#FBEAF0", text: "#72243E" },
+  coral: { bg: "#FAECE7", text: "#712B13" },
+  teal: { bg: "#E1F5EE", text: "#085041" },
+  amber: { bg: "#FAEEDA", text: "#633806" },
+  blue: { bg: "#E6F1FB", text: "#0C447C" },
+  gray: { bg: "#F1EFE8", text: "#444441" },
+  red: { bg: "#FCEBEB", text: "#791F1F" },
+};
+
+function TagPill({ label, color = "purple" }) {
+  const c = TAG_COLOR_STYLES[color] || TAG_COLOR_STYLES.purple;
+  return (
+    <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 12, background: c.bg, color: c.text, whiteSpace: "nowrap" }}>
+      {label}
+    </span>
+  );
+}
+
 function StatusDot({ status }) {
   return (
     <div style={{
@@ -211,6 +249,24 @@ function StatusDot({ status }) {
     }} />
   );
 }
+
+function TropeSkeleton() {
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {[80, 110, 90, 100, 75].map((w, i) => (
+        <div key={i} style={{
+          height: 24, width: w, borderRadius: 12,
+          background: "linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%)",
+          backgroundSize: "200% 100%",
+          animation: "shimmer 1.4s infinite",
+        }} />
+      ))}
+      <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
+    </div>
+  );
+}
+
+// ─── Bottom Nav ───────────────────────────────────────────────────────────────
 
 function BottomNav({ active, onNavigate }) {
   const items = [
@@ -222,15 +278,14 @@ function BottomNav({ active, onNavigate }) {
   return (
     <div style={{
       position: "sticky", bottom: 0, left: 0, right: 0, height: 64,
-      borderTop: "0.5px solid var(--color-border-tertiary, #e5e5e5)",
-      display: "flex", alignItems: "center", justifyContent: "space-around",
-      background: "var(--color-background-primary, #fff)", zIndex: 10,
+      borderTop: "0.5px solid #e5e5e5", display: "flex", alignItems: "center",
+      justifyContent: "space-around", background: "#fff", zIndex: 10,
     }}>
       {items.map(it => (
         <div key={it.key} onClick={() => onNavigate(it.key)} style={{
           display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
           fontSize: 11, cursor: "pointer",
-          color: active === it.key ? "#534AB7" : "var(--color-text-tertiary, #999)",
+          color: active === it.key ? "#534AB7" : "#999",
         }}>
           <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
             <path d={it.icon} />
@@ -242,7 +297,7 @@ function BottomNav({ active, onNavigate }) {
   );
 }
 
-// ─── Screens ──────────────────────────────────────────────────────────────────
+// ─── Home Screen ──────────────────────────────────────────────────────────────
 
 function HomeScreen({ books, loading, onSelectBook, onAdd, statusFilter, setStatusFilter }) {
   const [search, setSearch] = useState("");
@@ -264,20 +319,18 @@ function HomeScreen({ books, loading, onSelectBook, onAdd, statusFilter, setStat
           width: 38, height: 38, borderRadius: "50%", background: "#534AB7",
           display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
         }}>
-          <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={2.5} strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={2.5} strokeLinecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
         </div>
       </div>
       <div style={{ margin: "0 20px 14px", position: "relative" }}>
-        <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary,#999)" strokeWidth={2} style={{ position: "absolute", left: 12, top: 11 }}>
+        <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth={2} style={{ position: "absolute", left: 12, top: 11 }}>
           <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
         </svg>
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Buscar por titulo, autor ou trope..."
-          style={{
-            width: "100%", padding: "10px 14px 10px 36px", borderRadius: 10,
-            background: "var(--color-background-secondary,#f5f5f5)", border: "none",
-            fontSize: 14, color: "var(--color-text-primary,#222)", outline: "none",
-          }}
+          style={{ width: "100%", padding: "10px 14px 10px 36px", borderRadius: 10, background: "#f5f5f5", border: "none", fontSize: 14, outline: "none" }}
         />
       </div>
       <div style={{ display: "flex", gap: 8, padding: "0 20px 14px", overflowX: "auto" }}>
@@ -285,87 +338,107 @@ function HomeScreen({ books, loading, onSelectBook, onAdd, statusFilter, setStat
           <div key={f.key} onClick={() => setStatusFilter(f.key)} style={{
             padding: "6px 16px", borderRadius: 20, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap",
             background: statusFilter === f.key ? "#EEEDFE" : "transparent",
-            color: statusFilter === f.key ? "#3C3489" : "var(--color-text-secondary,#666)",
-            border: `0.5px solid ${statusFilter === f.key ? "#AFA9EC" : "var(--color-border-tertiary,#ddd)"}`,
+            color: statusFilter === f.key ? "#3C3489" : "#666",
+            border: `0.5px solid ${statusFilter === f.key ? "#AFA9EC" : "#ddd"}`,
             fontWeight: statusFilter === f.key ? 500 : 400,
           }}>{f.label}</div>
         ))}
       </div>
-
       {loading ? (
-        <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--color-text-tertiary,#999)" }}>
+        <div style={{ textAlign: "center", padding: "40px 20px", color: "#999" }}>
           <div style={{ fontSize: 14 }}>Carregando sua estante...</div>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "40px 20px", color: "#999" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>📚</div>
+          <div style={{ fontSize: 15, marginBottom: 4 }}>Sua estante esta vazia</div>
+          <div style={{ fontSize: 13 }}>Toque no <strong>+</strong> pra adicionar seu primeiro livro</div>
         </div>
       ) : (
         <>
-          <div style={{ padding: "0 20px 6px", fontSize: 13, color: "var(--color-text-secondary,#666)" }}>
+          <div style={{ padding: "0 20px 6px", fontSize: 13, color: "#666" }}>
             {filtered.length} {filtered.length === 1 ? "livro" : "livros"} na estante
           </div>
-          {filtered.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--color-text-tertiary,#999)" }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>📚</div>
-              <div style={{ fontSize: 15, marginBottom: 4 }}>Sua estante esta vazia</div>
-              <div style={{ fontSize: 13 }}>Toque no <strong>+</strong> pra adicionar seu primeiro livro</div>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, padding: "0 20px 20px" }}>
-              {filtered.map(book => (
-                <div key={book.id} onClick={() => onSelectBook(book)} style={{ cursor: "pointer", textAlign: "center" }}>
-                  <div style={{
-                    width: "100%", aspectRatio: "2/3", borderRadius: 10, position: "relative",
-                    background: book.cover ? `url(${book.cover}) center/cover` : getGradient(book.title),
-                    overflow: "hidden",
-                  }}>
-                    <StatusDot status={book.status} />
-                  </div>
-                  <div style={{ fontSize: 12, fontWeight: 500, marginTop: 6, lineHeight: 1.3,
-                    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                    {book.title}
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--color-text-tertiary,#999)", marginTop: 2 }}>
-                    {book.authors?.[0] || ""}
-                  </div>
-                  {book.genres?.[0] && (
-                    <div style={{ display: "flex", gap: 3, justifyContent: "center", marginTop: 4, flexWrap: "wrap" }}>
-                      <TagPill label={book.genres[0]} color={GENRE_COLORS[book.genres[0]] || "purple"} />
-                    </div>
-                  )}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, padding: "0 20px 20px" }}>
+            {filtered.map(book => (
+              <div key={book.id} onClick={() => onSelectBook(book)} style={{ cursor: "pointer", textAlign: "center" }}>
+                <div style={{
+                  width: "100%", aspectRatio: "2/3", borderRadius: 10, position: "relative",
+                  background: book.cover ? `url(${book.cover}) center/cover` : getGradient(book.title),
+                  overflow: "hidden",
+                }}>
+                  <StatusDot status={book.status} />
                 </div>
-              ))}
-            </div>
-          )}
+                <div style={{ fontSize: 12, fontWeight: 500, marginTop: 6, lineHeight: 1.3,
+                  display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                  {book.title}
+                </div>
+                <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{book.authors?.[0] || ""}</div>
+                {book.genres?.[0] && (
+                  <div style={{ display: "flex", gap: 3, justifyContent: "center", marginTop: 4, flexWrap: "wrap" }}>
+                    <TagPill label={book.genres[0]} color={GENRE_COLORS[book.genres[0]] || "purple"} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </>
       )}
     </div>
   );
 }
 
-function AddBookScreen({ onBack, onSave, apiKey }) {
+// ─── Add Book Screen ──────────────────────────────────────────────────────────
+
+function AddBookScreen({ onBack, onSave, apiKey, myBooks }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [classifying, setClassifying] = useState(false);
   const [selected, setSelected] = useState(null);
   const [status, setStatus] = useState("quero ler");
+  const [classification, setClassification] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const myBookIds = new Set(myBooks.map(b => b.googleId));
 
   const doSearch = async () => {
     if (!query.trim()) return;
     setLoading(true);
     setSelected(null);
+    setClassification(null);
     const r = await searchGoogleBooks(query);
     setResults(r);
     setLoading(false);
   };
 
+  const openBook = async (book) => {
+    setSelected(book);
+    setClassification(null);
+
+    const cached = await getCatalogEntry(book.googleId);
+    if (cached) {
+      setClassification({
+        genres: JSON.parse(cached.genres || "[]"),
+        tropes: JSON.parse(cached.tropes || "[]"),
+        summary: cached.summary || "",
+      });
+      return;
+    }
+
+    if (apiKey) {
+      const result = await classifyWithAI(apiKey, book.title, book.authors.join(", "), book.description);
+      await saveCatalogEntry(book.googleId, book, result);
+      setClassification(result);
+    } else {
+      setClassification({ genres: [], tropes: [], summary: "" });
+    }
+  };
+
   const doSave = async () => {
     if (!selected) return;
-    let classification = { genres: [], tropes: [], summary: "" };
-    if (apiKey) {
-      setClassifying(true);
-      classification = await classifyWithAI(apiKey, selected.title, selected.authors.join(", "), selected.description);
-      setClassifying(false);
-    }
-    onSave({
+    setSaving(true);
+    const cl = classification || { genres: [], tropes: [], summary: "" };
+    await onSave({
       id: Date.now().toString(),
       googleId: selected.googleId,
       title: selected.title,
@@ -375,139 +448,158 @@ function AddBookScreen({ onBack, onSave, apiKey }) {
       publishedDate: selected.publishedDate,
       pageCount: selected.pageCount,
       status,
-      genres: classification.genres || [],
-      tropes: classification.tropes || [],
-      summary: classification.summary || "",
+      genres: cl.genres || [],
+      tropes: cl.tropes || [],
+      summary: cl.summary || "",
       rating: 0,
       addedAt: new Date().toISOString(),
     });
+    setSaving(false);
   };
+
+  const alreadyInShelf = selected && myBookIds.has(selected.googleId);
 
   return (
     <div style={{ paddingBottom: 20 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 20px 16px" }}>
-        <svg onClick={onBack} width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ cursor: "pointer" }}>
+        <svg onClick={() => selected ? setSelected(null) : onBack()} width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ cursor: "pointer" }}>
           <path d="M15 18l-6-6 6-6"/>
         </svg>
-        <h1 style={{ fontSize: 20, fontWeight: 600 }}>Adicionar livro</h1>
-      </div>
-      <div style={{ margin: "0 20px 16px", display: "flex", gap: 8 }}>
-        <input value={query} onChange={e => setQuery(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && doSearch()}
-          placeholder="Nome do livro ou autor..."
-          style={{
-            flex: 1, padding: "10px 14px", borderRadius: 10,
-            background: "var(--color-background-secondary,#f5f5f5)", border: "none",
-            fontSize: 14, color: "var(--color-text-primary,#222)", outline: "none",
-          }}
-        />
-        <button onClick={doSearch} disabled={loading} style={{
-          padding: "10px 18px", borderRadius: 10, background: "#534AB7", color: "white",
-          border: "none", fontSize: 14, fontWeight: 500, cursor: "pointer", opacity: loading ? 0.6 : 1,
-        }}>{loading ? "..." : "Buscar"}</button>
+        <h1 style={{ fontSize: 20, fontWeight: 600 }}>{selected ? selected.title : "Adicionar livro"}</h1>
       </div>
 
-      {results.length > 0 && !selected && (
-        <div style={{ padding: "0 20px" }}>
-          <div style={{ fontSize: 13, color: "var(--color-text-secondary,#666)", marginBottom: 10 }}>
-            {results.length} resultados encontrados
+      {!selected && (
+        <>
+          <div style={{ margin: "0 20px 16px", display: "flex", gap: 8 }}>
+            <input value={query} onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && doSearch()}
+              placeholder="Nome do livro ou autor..."
+              style={{ flex: 1, padding: "10px 14px", borderRadius: 10, background: "#f5f5f5", border: "none", fontSize: 14, outline: "none" }}
+            />
+            <button onClick={doSearch} disabled={loading} style={{
+              padding: "10px 18px", borderRadius: 10, background: "#534AB7", color: "white",
+              border: "none", fontSize: 14, fontWeight: 500, cursor: "pointer", opacity: loading ? 0.6 : 1,
+            }}>{loading ? "..." : "Buscar"}</button>
           </div>
-          {results.map(r => (
-            <div key={r.googleId} onClick={() => setSelected(r)} style={{
-              display: "flex", gap: 12, padding: 12, marginBottom: 8,
-              borderRadius: 12, border: "0.5px solid var(--color-border-tertiary,#ddd)",
-              cursor: "pointer", background: "var(--color-background-primary,#fff)",
-            }}>
-              <div style={{
-                width: 50, height: 75, borderRadius: 6, flexShrink: 0,
-                background: r.cover ? `url(${r.cover}) center/cover` : getGradient(r.title),
-              }} />
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                <div style={{ fontSize: 14, fontWeight: 500, lineHeight: 1.3 }}>{r.title}</div>
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary,#666)", marginTop: 2 }}>
-                  {r.authors.join(", ")}
-                </div>
-                {r.publishedDate && (
-                  <div style={{ fontSize: 11, color: "var(--color-text-tertiary,#999)", marginTop: 2 }}>
-                    {r.publishedDate.substring(0, 4)}
+
+          {results.length > 0 && (
+            <div style={{ padding: "0 20px" }}>
+              <div style={{ fontSize: 13, color: "#666", marginBottom: 10 }}>{results.length} resultados encontrados</div>
+              {results.map(r => {
+                const inShelf = myBookIds.has(r.googleId);
+                return (
+                  <div key={r.googleId} onClick={() => openBook(r)} style={{
+                    display: "flex", gap: 12, padding: 12, marginBottom: 8,
+                    borderRadius: 12, border: `0.5px solid ${inShelf ? "#AFA9EC" : "#ddd"}`,
+                    cursor: "pointer", background: inShelf ? "#EEEDFE" : "#fff",
+                  }}>
+                    <div style={{
+                      width: 50, height: 75, borderRadius: 6, flexShrink: 0,
+                      background: r.cover ? `url(${r.cover}) center/cover` : getGradient(r.title),
+                    }} />
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                      <div style={{ fontSize: 14, fontWeight: 500, lineHeight: 1.3 }}>{r.title}</div>
+                      <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{r.authors.join(", ")}</div>
+                      {r.publishedDate && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{r.publishedDate.substring(0, 4)}</div>}
+                      {inShelf && <div style={{ fontSize: 11, color: "#534AB7", marginTop: 4, fontWeight: 500 }}>✓ Na sua estante</div>}
+                    </div>
                   </div>
-                )}
-              </div>
+                );
+              })}
             </div>
-          ))}
-        </div>
+          )}
+
+          {results.length === 0 && !loading && (
+            <div style={{ textAlign: "center", padding: "40px 20px", color: "#999" }}>
+              <div style={{ fontSize: 14 }}>Busque pelo nome do livro ou autor</div>
+            </div>
+          )}
+        </>
       )}
 
       {selected && (
         <div style={{ padding: "0 20px" }}>
-          <div style={{
-            padding: 16, borderRadius: 12, border: "2px solid #534AB7",
-            background: "var(--color-background-primary,#fff)", marginBottom: 16,
-          }}>
-            <div style={{ display: "flex", gap: 14 }}>
-              <div style={{
-                width: 70, height: 105, borderRadius: 8, flexShrink: 0,
-                background: selected.cover ? `url(${selected.cover}) center/cover` : getGradient(selected.title),
-              }} />
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.3 }}>{selected.title}</div>
-                <div style={{ fontSize: 13, color: "var(--color-text-secondary,#666)", marginTop: 4 }}>
-                  {selected.authors.join(", ")}
-                </div>
-                {selected.pageCount > 0 && (
-                  <div style={{ fontSize: 12, color: "var(--color-text-tertiary,#999)", marginTop: 4 }}>
-                    {selected.pageCount} paginas
+          <div style={{ display: "flex", gap: 14, marginBottom: 16 }}>
+            <div style={{
+              width: 90, height: 135, borderRadius: 10, flexShrink: 0,
+              background: selected.cover ? `url(${selected.cover}) center/cover` : getGradient(selected.title),
+            }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 17, fontWeight: 600, lineHeight: 1.3 }}>{selected.title}</div>
+              <div style={{ fontSize: 13, color: "#666", marginTop: 4 }}>{selected.authors.join(", ")}</div>
+              {selected.pageCount > 0 && <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>{selected.pageCount} páginas</div>}
+            </div>
+          </div>
+
+          <div style={{ padding: 14, borderRadius: 12, background: "#f5f5f5", marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: "#444" }}>
+              {classification ? "Classificação por IA" : "Classificando com IA..."}
+            </div>
+            {!classification ? (
+              <TropeSkeleton />
+            ) : (
+              <>
+                {classification.genres?.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                    {classification.genres.map(g => <TagPill key={g} label={g} color={GENRE_COLORS[g] || "purple"} />)}
                   </div>
                 )}
-              </div>
-            </div>
-            {selected.description && (
-              <div style={{
-                fontSize: 13, color: "var(--color-text-secondary,#666)", marginTop: 12,
-                lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 4,
-                WebkitBoxOrient: "vertical", overflow: "hidden",
-              }}>{selected.description.replace(/<[^>]*>/g, "")}</div>
+                {classification.tropes?.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                    {classification.tropes.map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} />)}
+                  </div>
+                )}
+                {classification.summary && (
+                  <div style={{ fontSize: 12, color: "#666", fontStyle: "italic", lineHeight: 1.5 }}>{classification.summary}</div>
+                )}
+                {!apiKey && <div style={{ fontSize: 12, color: "#999" }}>Configure sua API key em Config para classificar automaticamente.</div>}
+              </>
             )}
           </div>
 
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Status de leitura</div>
-            <div style={{ display: "flex", gap: 8 }}>
-              {Object.entries(STATUS_LABELS).map(([key, label]) => (
-                <div key={key} onClick={() => setStatus(key)} style={{
-                  flex: 1, padding: "10px 0", borderRadius: 10, textAlign: "center",
-                  fontSize: 13, cursor: "pointer", fontWeight: status === key ? 500 : 400,
-                  background: status === key ? "#EEEDFE" : "transparent",
-                  color: status === key ? "#3C3489" : "var(--color-text-secondary,#666)",
-                  border: `0.5px solid ${status === key ? "#AFA9EC" : "var(--color-border-tertiary,#ddd)"}`,
-                }}>{label}</div>
-              ))}
-            </div>
-          </div>
-
-          <button onClick={doSave} disabled={classifying} style={{
-            width: "100%", padding: "14px", borderRadius: 12, border: "none",
-            background: classifying ? "#AFA9EC" : "#534AB7", color: "white",
-            fontSize: 15, fontWeight: 600, cursor: "pointer",
-          }}>
-            {classifying ? "Classificando com IA..." : "Salvar na estante"}
-          </button>
-          {classifying && (
-            <div style={{ fontSize: 12, color: "var(--color-text-tertiary,#999)", textAlign: "center", marginTop: 8 }}>
-              Analisando sinopse e identificando tropes...
+          {selected.description && (
+            <div style={{ fontSize: 13, color: "#666", lineHeight: 1.5, marginBottom: 16,
+              display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+              {selected.description.replace(/<[^>]*>/g, "")}
             </div>
           )}
-        </div>
-      )}
 
-      {results.length === 0 && !loading && (
-        <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--color-text-tertiary,#999)" }}>
-          <div style={{ fontSize: 14 }}>Busque pelo nome do livro ou autor</div>
+          {alreadyInShelf ? (
+            <div style={{ padding: 14, borderRadius: 12, background: "#EEEDFE", fontSize: 14, color: "#3C3489", textAlign: "center", fontWeight: 500 }}>
+              ✓ Este livro já está na sua estante
+            </div>
+          ) : (
+            <>
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Status de leitura</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {Object.entries(STATUS_LABELS).map(([key, label]) => (
+                    <div key={key} onClick={() => setStatus(key)} style={{
+                      flex: 1, padding: "10px 0", borderRadius: 10, textAlign: "center",
+                      fontSize: 13, cursor: "pointer", fontWeight: status === key ? 500 : 400,
+                      background: status === key ? "#EEEDFE" : "transparent",
+                      color: status === key ? "#3C3489" : "#666",
+                      border: `0.5px solid ${status === key ? "#AFA9EC" : "#ddd"}`,
+                    }}>{label}</div>
+                  ))}
+                </div>
+              </div>
+              <button onClick={doSave} disabled={saving || !classification} style={{
+                width: "100%", padding: "14px", borderRadius: 12, border: "none",
+                background: saving || !classification ? "#AFA9EC" : "#534AB7",
+                color: "white", fontSize: 15, fontWeight: 600, cursor: "pointer",
+              }}>
+                {saving ? "Salvando..." : !classification ? "Aguardando classificação..." : "Salvar na estante"}
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
   );
 }
+
+// ─── Book Detail Screen ───────────────────────────────────────────────────────
 
 function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
   const [editing, setEditing] = useState(false);
@@ -521,8 +613,12 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
     setEditing(false);
   };
 
-  const toggleTrope = (trope) => {
-    setCustomTropes(prev => prev.includes(trope) ? prev.filter(t => t !== trope) : [...prev, trope]);
+  const getTropeStyle = (t, selected) => {
+    const color = TROPE_COLORS[t];
+    const c = TAG_COLOR_STYLES[color] || TAG_COLOR_STYLES.purple;
+    return selected
+      ? { background: c.bg, color: c.text, border: "none" }
+      : { background: "#f5f5f5", color: "#999", border: "0.5px solid #ddd" };
   };
 
   return (
@@ -536,7 +632,7 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
             {editing ? "Cancelar" : "Editar"}
           </div>
           <div onClick={() => { if (confirm("Remover este livro da estante?")) { onDelete(book.id); onBack(); } }}
-            style={{ fontSize: 13, color: "var(--color-text-danger,#c00)", cursor: "pointer" }}>
+            style={{ fontSize: 13, color: "#c00", cursor: "pointer" }}>
             Remover
           </div>
         </div>
@@ -549,9 +645,9 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
         }} />
         <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
           <h2 style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, marginBottom: 4 }}>{book.title}</h2>
-          <div style={{ fontSize: 14, color: "var(--color-text-secondary,#666)" }}>{book.authors?.join(", ")}</div>
+          <div style={{ fontSize: 14, color: "#666" }}>{book.authors?.join(", ")}</div>
           {book.publishedDate && (
-            <div style={{ fontSize: 12, color: "var(--color-text-tertiary,#999)", marginTop: 4 }}>
+            <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>
               {book.publishedDate.substring(0, 4)} {book.pageCount > 0 ? `· ${book.pageCount} pag.` : ""}
             </div>
           )}
@@ -559,7 +655,7 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
             {[1, 2, 3, 4, 5].map(s => (
               <svg key={s} onClick={() => { if (editing) setRating(s === rating ? 0 : s); }} width={22} height={22}
                 viewBox="0 0 24 24" fill={s <= rating ? "#EF9F27" : "none"}
-                stroke={s <= rating ? "#EF9F27" : "var(--color-border-secondary,#ccc)"} strokeWidth={1.5}
+                stroke={s <= rating ? "#EF9F27" : "#ccc"} strokeWidth={1.5}
                 style={{ cursor: editing ? "pointer" : "default" }}>
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
               </svg>
@@ -573,12 +669,11 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
         <div style={{ display: "flex", gap: 8 }}>
           {Object.entries(STATUS_LABELS).map(([key, label]) => (
             <div key={key} onClick={() => editing && setStatus(key)} style={{
-              flex: 1, padding: "8px 0", borderRadius: 10, textAlign: "center",
-              fontSize: 13, cursor: editing ? "pointer" : "default",
-              fontWeight: status === key ? 500 : 400,
+              flex: 1, padding: "8px 0", borderRadius: 10, textAlign: "center", fontSize: 13,
+              cursor: editing ? "pointer" : "default", fontWeight: status === key ? 500 : 400,
               background: status === key ? "#EEEDFE" : "transparent",
-              color: status === key ? "#3C3489" : "var(--color-text-secondary,#666)",
-              border: `0.5px solid ${status === key ? "#AFA9EC" : "var(--color-border-tertiary,#ddd)"}`,
+              color: status === key ? "#3C3489" : "#666",
+              border: `0.5px solid ${status === key ? "#AFA9EC" : "#ddd"}`,
               opacity: editing ? 1 : (status === key ? 1 : 0.5),
             }}>{label}</div>
           ))}
@@ -588,23 +683,17 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
       {book.summary && (
         <div style={{ padding: "0 20px 16px" }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Resumo da IA</div>
-          <div style={{
-            fontSize: 13, color: "var(--color-text-secondary,#666)", lineHeight: 1.5,
-            fontStyle: "italic", padding: "10px 14px", borderRadius: 10,
-            background: "var(--color-background-secondary,#f5f5f5)",
-          }}>{book.summary}</div>
+          <div style={{ fontSize: 13, color: "#666", lineHeight: 1.5, fontStyle: "italic", padding: "10px 14px", borderRadius: 10, background: "#f5f5f5" }}>
+            {book.summary}
+          </div>
         </div>
       )}
 
       <div style={{ padding: "0 20px 16px" }}>
         <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Generos</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {(book.genres || []).map(g => (
-            <TagPill key={g} label={g} color={GENRE_COLORS[g] || "purple"} />
-          ))}
-          {(!book.genres || book.genres.length === 0) && (
-            <span style={{ fontSize: 13, color: "var(--color-text-tertiary,#999)" }}>Nenhum genero classificado</span>
-          )}
+          {(book.genres || []).map(g => <TagPill key={g} label={g} color={GENRE_COLORS[g] || "purple"} />)}
+          {(!book.genres || book.genres.length === 0) && <span style={{ fontSize: 13, color: "#999" }}>Nenhum genero classificado</span>}
         </div>
       </div>
 
@@ -612,18 +701,15 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
         <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Tropes</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {(editing ? (showAllTropes ? TROPES_LIST : [...new Set([...customTropes, ...TROPES_LIST.slice(0, 10)])]) : customTropes).map(t => (
-            <div key={t} onClick={() => editing && toggleTrope(t)} style={{
+            <div key={t} onClick={() => editing && setCustomTropes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])} style={{
               fontSize: 11, padding: "4px 12px", borderRadius: 12, cursor: editing ? "pointer" : "default",
-              background: customTropes.includes(t) ? (TROPE_COLORS[t] === "pink" ? "#FBEAF0" : TROPE_COLORS[t] === "coral" ? "#FAECE7" : TROPE_COLORS[t] === "teal" ? "#E1F5EE" : TROPE_COLORS[t] === "amber" ? "#FAEEDA" : TROPE_COLORS[t] === "gray" ? "#F1EFE8" : TROPE_COLORS[t] === "red" ? "#FCEBEB" : TROPE_COLORS[t] === "blue" ? "#E6F1FB" : "#EEEDFE") : "var(--color-background-secondary,#f5f5f5)",
-              color: customTropes.includes(t) ? (TROPE_COLORS[t] === "pink" ? "#72243E" : TROPE_COLORS[t] === "coral" ? "#712B13" : TROPE_COLORS[t] === "teal" ? "#085041" : TROPE_COLORS[t] === "amber" ? "#633806" : TROPE_COLORS[t] === "gray" ? "#444441" : TROPE_COLORS[t] === "red" ? "#791F1F" : TROPE_COLORS[t] === "blue" ? "#0C447C" : "#3C3489") : "var(--color-text-tertiary,#999)",
-              border: customTropes.includes(t) ? "none" : "0.5px solid var(--color-border-tertiary,#ddd)",
+              ...getTropeStyle(t, customTropes.includes(t)),
             }}>{t}</div>
           ))}
           {editing && !showAllTropes && (
-            <div onClick={() => setShowAllTropes(true)} style={{
-              fontSize: 11, padding: "4px 12px", borderRadius: 12, cursor: "pointer",
-              color: "#534AB7", border: "0.5px dashed #AFA9EC",
-            }}>+ ver todas</div>
+            <div onClick={() => setShowAllTropes(true)} style={{ fontSize: 11, padding: "4px 12px", borderRadius: 12, cursor: "pointer", color: "#534AB7", border: "0.5px dashed #AFA9EC" }}>
+              + ver todas
+            </div>
           )}
         </div>
       </div>
@@ -631,9 +717,7 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
       {book.description && (
         <div style={{ padding: "0 20px 16px" }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Sinopse</div>
-          <div style={{ fontSize: 13, color: "var(--color-text-secondary,#666)", lineHeight: 1.6 }}>
-            {book.description.replace(/<[^>]*>/g, "")}
-          </div>
+          <div style={{ fontSize: 13, color: "#666", lineHeight: 1.6 }}>{book.description.replace(/<[^>]*>/g, "")}</div>
         </div>
       )}
 
@@ -649,6 +733,8 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
   );
 }
 
+// ─── Explore Screen ───────────────────────────────────────────────────────────
+
 function ExploreScreen({ books, onSelectBook }) {
   const [selectedTropes, setSelectedTropes] = useState([]);
   const [selectedGenre, setSelectedGenre] = useState("");
@@ -662,8 +748,6 @@ function ExploreScreen({ books, onSelectBook }) {
     return true;
   });
 
-  const toggleTrope = (t) => setSelectedTropes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
-
   return (
     <div style={{ paddingBottom: 8 }}>
       <div style={{ padding: "0 20px 16px", display: "flex", alignItems: "center", gap: 10 }}>
@@ -674,7 +758,7 @@ function ExploreScreen({ books, onSelectBook }) {
       </div>
 
       {books.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--color-text-tertiary,#999)" }}>
+        <div style={{ textAlign: "center", padding: "40px 20px", color: "#999" }}>
           <div style={{ fontSize: 15, marginBottom: 4 }}>Nada pra explorar ainda</div>
           <div style={{ fontSize: 13 }}>Adicione livros pra poder filtrar por tropes</div>
         </div>
@@ -688,24 +772,23 @@ function ExploreScreen({ books, onSelectBook }) {
                   <div key={g} onClick={() => setSelectedGenre(selectedGenre === g ? "" : g)} style={{
                     padding: "6px 14px", borderRadius: 20, fontSize: 13, cursor: "pointer",
                     background: selectedGenre === g ? "#EEEDFE" : "transparent",
-                    color: selectedGenre === g ? "#3C3489" : "var(--color-text-secondary,#666)",
-                    border: `0.5px solid ${selectedGenre === g ? "#AFA9EC" : "var(--color-border-tertiary,#ddd)"}`,
+                    color: selectedGenre === g ? "#3C3489" : "#666",
+                    border: `0.5px solid ${selectedGenre === g ? "#AFA9EC" : "#ddd"}`,
                     fontWeight: selectedGenre === g ? 500 : 400,
                   }}>{g}</div>
                 ))}
               </div>
             </div>
           )}
-
           {allTropes.length > 0 && (
             <div style={{ padding: "0 20px 16px" }}>
               <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Tropes</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 {allTropes.map(t => (
-                  <div key={t} onClick={() => toggleTrope(t)} style={{
+                  <div key={t} onClick={() => setSelectedTropes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])} style={{
                     padding: "5px 12px", borderRadius: 16, fontSize: 12, cursor: "pointer",
-                    background: selectedTropes.includes(t) ? "#EEEDFE" : "var(--color-background-secondary,#f5f5f5)",
-                    color: selectedTropes.includes(t) ? "#3C3489" : "var(--color-text-secondary,#666)",
+                    background: selectedTropes.includes(t) ? "#EEEDFE" : "#f5f5f5",
+                    color: selectedTropes.includes(t) ? "#3C3489" : "#666",
                     border: selectedTropes.includes(t) ? "0.5px solid #AFA9EC" : "0.5px solid transparent",
                     fontWeight: selectedTropes.includes(t) ? 500 : 400,
                   }}>{t}</div>
@@ -713,31 +796,22 @@ function ExploreScreen({ books, onSelectBook }) {
               </div>
             </div>
           )}
-
-          <div style={{ padding: "0 20px", borderTop: "0.5px solid var(--color-border-tertiary,#e5e5e5)", paddingTop: 16 }}>
-            <div style={{ fontSize: 13, color: "var(--color-text-secondary,#666)", marginBottom: 12 }}>
+          <div style={{ padding: "0 20px", borderTop: "0.5px solid #e5e5e5", paddingTop: 16 }}>
+            <div style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>
               {filtered.length} {filtered.length === 1 ? "livro encontrado" : "livros encontrados"}
               {selectedTropes.length > 0 && ` com ${selectedTropes.join(" + ")}`}
             </div>
             {filtered.map(book => (
               <div key={book.id} onClick={() => onSelectBook(book)} style={{
                 display: "flex", gap: 12, padding: 12, marginBottom: 8,
-                borderRadius: 12, border: "0.5px solid var(--color-border-tertiary,#ddd)",
-                cursor: "pointer", background: "var(--color-background-primary,#fff)",
+                borderRadius: 12, border: "0.5px solid #ddd", cursor: "pointer", background: "#fff",
               }}>
-                <div style={{
-                  width: 50, height: 75, borderRadius: 6, flexShrink: 0,
-                  background: book.cover ? `url(${book.cover}) center/cover` : getGradient(book.title),
-                }} />
+                <div style={{ width: 50, height: 75, borderRadius: 6, flexShrink: 0, background: book.cover ? `url(${book.cover}) center/cover` : getGradient(book.title) }} />
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14, fontWeight: 500 }}>{book.title}</div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary,#666)", marginTop: 2 }}>
-                    {book.authors?.join(", ")}
-                  </div>
+                  <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{book.authors?.join(", ")}</div>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
-                    {(book.tropes || []).slice(0, 3).map(t => (
-                      <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} />
-                    ))}
+                    {(book.tropes || []).slice(0, 3).map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} />)}
                   </div>
                 </div>
               </div>
@@ -749,6 +823,8 @@ function ExploreScreen({ books, onSelectBook }) {
   );
 }
 
+// ─── Reco Screen ──────────────────────────────────────────────────────────────
+
 function RecoScreen({ books, onSelectBook }) {
   if (books.length < 2) {
     return (
@@ -759,7 +835,7 @@ function RecoScreen({ books, onSelectBook }) {
           </svg>
           <h1 style={{ fontSize: 22, fontWeight: 600 }}>Pra mim</h1>
         </div>
-        <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--color-text-tertiary,#999)" }}>
+        <div style={{ textAlign: "center", padding: "40px 20px", color: "#999" }}>
           <div style={{ fontSize: 15, marginBottom: 4 }}>Adicione mais livros!</div>
           <div style={{ fontSize: 13 }}>Preciso de pelo menos 2 livros pra gerar recomendacoes</div>
         </div>
@@ -786,10 +862,8 @@ function RecoScreen({ books, onSelectBook }) {
       const sim = getSimilarity(bookA, bookB);
       if (sim > 30) {
         const existing = recommendations.find(r => r.book.id === bookB.id);
-        if (!existing || existing.similarity < sim) {
-          if (existing) existing.similarity = sim;
-          else recommendations.push({ book: bookB, similarity: sim, basedOn: bookA });
-        }
+        if (!existing) recommendations.push({ book: bookB, similarity: sim, basedOn: bookA });
+        else if (existing.similarity < sim) { existing.similarity = sim; existing.basedOn = bookA; }
       }
     });
   });
@@ -809,10 +883,7 @@ function RecoScreen({ books, onSelectBook }) {
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Suas tropes favoritas</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {topTropes.map(([trope, count]) => (
-              <div key={trope} style={{
-                display: "flex", alignItems: "center", gap: 6,
-                padding: "6px 12px", borderRadius: 16, background: "#EEEDFE",
-              }}>
+              <div key={trope} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 16, background: "#EEEDFE" }}>
                 <span style={{ fontSize: 12, color: "#3C3489" }}>{trope}</span>
                 <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: "#AFA9EC", color: "#26215C" }}>{count}</span>
               </div>
@@ -824,29 +895,21 @@ function RecoScreen({ books, onSelectBook }) {
       {recommendations.length > 0 ? (
         <div style={{ padding: "0 20px" }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Livros semelhantes na sua estante</div>
-          <div style={{ fontSize: 13, color: "var(--color-text-secondary,#666)", marginBottom: 12 }}>Baseado nas tropes em comum</div>
+          <div style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>Baseado nas tropes em comum</div>
           {recommendations.slice(0, 6).map(({ book, similarity, basedOn }) => (
             <div key={book.id} onClick={() => onSelectBook(book)} style={{
               display: "flex", gap: 12, padding: 14, marginBottom: 10,
-              borderRadius: 12, border: "0.5px solid var(--color-border-tertiary,#ddd)",
-              cursor: "pointer", background: "var(--color-background-primary,#fff)",
+              borderRadius: 12, border: "0.5px solid #ddd", cursor: "pointer", background: "#fff",
             }}>
-              <div style={{
-                width: 56, height: 84, borderRadius: 8, flexShrink: 0,
-                background: book.cover ? `url(${book.cover}) center/cover` : getGradient(book.title),
-              }} />
+              <div style={{ width: 56, height: 84, borderRadius: 8, flexShrink: 0, background: book.cover ? `url(${book.cover}) center/cover` : getGradient(book.title) }} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 14, fontWeight: 500 }}>{book.title}</div>
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary,#666)", marginTop: 2 }}>{book.authors?.join(", ")}</div>
-                <div style={{ fontSize: 11, color: "var(--color-text-tertiary,#999)", marginTop: 4, fontStyle: "italic" }}>
-                  Parecido com "{basedOn.title}"
-                </div>
+                <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{book.authors?.join(", ")}</div>
+                <div style={{ fontSize: 11, color: "#999", marginTop: 4, fontStyle: "italic" }}>Parecido com "{basedOn.title}"</div>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
-                  {(book.tropes || []).slice(0, 3).map(t => (
-                    <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} />
-                  ))}
+                  {(book.tropes || []).slice(0, 3).map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} />)}
                 </div>
-                <div style={{ height: 4, borderRadius: 2, background: "var(--color-background-secondary,#f0f0f0)", marginTop: 8 }}>
+                <div style={{ height: 4, borderRadius: 2, background: "#f0f0f0", marginTop: 8 }}>
                   <div style={{ height: "100%", borderRadius: 2, background: "#534AB7", width: `${similarity}%` }} />
                 </div>
                 <div style={{ fontSize: 11, color: "#534AB7", fontWeight: 500, marginTop: 3 }}>{similarity}% compativel</div>
@@ -855,13 +918,15 @@ function RecoScreen({ books, onSelectBook }) {
           ))}
         </div>
       ) : (
-        <div style={{ textAlign: "center", padding: "20px", color: "var(--color-text-tertiary,#999)" }}>
+        <div style={{ textAlign: "center", padding: "20px", color: "#999" }}>
           <div style={{ fontSize: 13 }}>Adicione mais livros com tropes parecidas pra ver recomendacoes</div>
         </div>
       )}
     </div>
   );
 }
+
+// ─── Config Screen ────────────────────────────────────────────────────────────
 
 function ConfigScreen({ apiKey, setApiKey }) {
   const [input, setInput] = useState(apiKey);
@@ -888,68 +953,56 @@ function ConfigScreen({ apiKey, setApiKey }) {
       </div>
 
       <div style={{ padding: "0 20px" }}>
-        <div style={{ padding: 16, borderRadius: 12, background: "var(--color-background-secondary,#f5f5f5)", marginBottom: 16 }}>
+        <div style={{ padding: 16, borderRadius: 12, background: "#f5f5f5", marginBottom: 16 }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Chave da API Anthropic</div>
-          <div style={{ fontSize: 12, color: "var(--color-text-secondary,#666)", marginBottom: 12, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 12, lineHeight: 1.5 }}>
             Necessaria pra classificar livros automaticamente por tropes usando IA. Sua chave fica salva apenas no seu dispositivo.
           </div>
-          <div style={{ position: "relative", marginBottom: 6 }}>
-            <textarea
-              value={showKey ? input : maskedValue}
-              onChange={e => { if (showKey) setInput(e.target.value); }}
-              onFocus={() => setShowKey(true)}
-              placeholder="Cole sua chave aqui (sk-ant-...)"
-              rows={3}
-              style={{
-                width: "100%", padding: "12px 14px", borderRadius: 10,
-                background: "var(--color-background-primary,#fff)",
-                border: "0.5px solid var(--color-border-tertiary,#ddd)",
-                fontSize: 13, outline: "none", resize: "none",
-                color: "var(--color-text-primary,#222)",
-                fontFamily: "monospace", lineHeight: 1.5, wordBreak: "break-all",
-              }}
-            />
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <div onClick={() => setShowKey(!showKey)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, color: "#534AB7" }}>
-              <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
-                {showKey ? (
-                  <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
-                ) : (
-                  <><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></>
-                )}
-              </svg>
-              {showKey ? "Esconder chave" : "Mostrar chave"}
-            </div>
+          <textarea
+            value={showKey ? input : maskedValue}
+            onChange={e => { if (showKey) setInput(e.target.value); }}
+            onFocus={() => setShowKey(true)}
+            placeholder="Cole sua chave aqui (sk-ant-...)"
+            rows={3}
+            style={{
+              width: "100%", padding: "12px 14px", borderRadius: 10, background: "#fff",
+              border: "0.5px solid #ddd", fontSize: 13, outline: "none", resize: "none",
+              fontFamily: "monospace", lineHeight: 1.5, wordBreak: "break-all", marginBottom: 8,
+            }}
+          />
+          <div onClick={() => setShowKey(!showKey)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, color: "#534AB7", marginBottom: 12 }}>
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+              {showKey
+                ? <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                : <><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></>
+              }
+            </svg>
+            {showKey ? "Esconder chave" : "Mostrar chave"}
           </div>
           <button onClick={handleSave} style={{
             width: "100%", padding: "12px", borderRadius: 10, border: "none",
-            background: saved ? "#639922" : "#534AB7", color: "white",
-            fontSize: 14, fontWeight: 500, cursor: "pointer",
+            background: saved ? "#639922" : "#534AB7", color: "white", fontSize: 14, fontWeight: 500, cursor: "pointer",
           }}>{saved ? "Salvo!" : "Salvar chave"}</button>
         </div>
 
-        <div style={{ padding: 16, borderRadius: 12, background: "var(--color-background-secondary,#f5f5f5)", marginBottom: 16 }}>
+        <div style={{ padding: 16, borderRadius: 12, background: "#f5f5f5", marginBottom: 16 }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Sobre o app</div>
-          <div style={{ fontSize: 13, color: "var(--color-text-secondary,#666)", lineHeight: 1.6 }}>
+          <div style={{ fontSize: 13, color: "#666", lineHeight: 1.6 }}>
             Minha Estante e sua biblioteca pessoal inteligente. Adicione livros, classifique por tropes com ajuda de IA, e descubra livros parecidos na sua colecao.
           </div>
         </div>
 
         <div style={{ padding: 16, borderRadius: 12, border: "0.5px solid #f5c1c1", background: "#fcebeb" }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4, color: "#a32d2d" }}>Limpar dados</div>
-          <div style={{ fontSize: 12, color: "var(--color-text-secondary,#666)", marginBottom: 10 }}>
-            Remove todos os livros da sua estante. Esta acao nao pode ser desfeita.
-          </div>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Remove todos os livros da sua estante. Esta acao nao pode ser desfeita.</div>
           <button onClick={async () => {
             if (confirm("Tem certeza? Todos os livros serao removidos.")) {
               await supabase.from("books").delete().neq("id", "");
               window.location.reload();
             }
-          }} style={{
-            padding: "8px 20px", borderRadius: 8, border: "none",
-            background: "#a32d2d", color: "white", fontSize: 13, cursor: "pointer",
-          }}>Limpar tudo</button>
+          }} style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: "#a32d2d", color: "white", fontSize: 13, cursor: "pointer" }}>
+            Limpar tudo
+          </button>
         </div>
       </div>
     </div>
@@ -970,10 +1023,7 @@ export default function App() {
   const scrollRef = useRef(null);
 
   useEffect(() => {
-    fetchBooks().then(data => {
-      setBooks(data);
-      setLoadingBooks(false);
-    });
+    fetchBooks().then(data => { setBooks(data); setLoadingBooks(false); });
   }, []);
 
   useEffect(() => { scrollRef.current?.scrollTo(0, 0); }, [screen, selectedBook]);
@@ -1001,18 +1051,20 @@ export default function App() {
 
   return (
     <div style={{
-      maxWidth: 430, margin: "0 auto",
-      fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif",
-      minHeight: "100vh", display: "flex", flexDirection: "column",
-      background: "var(--color-background-primary, #fff)",
-      color: "var(--color-text-primary, #222)",
+      maxWidth: 430, margin: "0 auto", fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif",
+      minHeight: "100vh", display: "flex", flexDirection: "column", background: "#fff", color: "#222",
     }}>
       <div ref={scrollRef} style={{ flex: 1, paddingTop: 16, paddingBottom: 64, overflowY: "auto" }}>
         {screen === "home" && (
-          <HomeScreen books={books} loading={loadingBooks} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }}
-            onAdd={() => setScreen("add")} statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
+          <HomeScreen books={books} loading={loadingBooks}
+            onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }}
+            onAdd={() => setScreen("add")}
+            statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+          />
         )}
-        {screen === "add" && <AddBookScreen onBack={() => setScreen("home")} onSave={addBook} apiKey={apiKey} />}
+        {screen === "add" && (
+          <AddBookScreen onBack={() => setScreen("home")} onSave={addBook} apiKey={apiKey} myBooks={books} />
+        )}
         {screen === "detail" && selectedBook && (
           <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")} onUpdate={updateBook} onDelete={deleteBook} />
         )}
