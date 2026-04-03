@@ -107,7 +107,7 @@ async function getCatalogEntry(googleId) {
     .from("books_catalog")
     .select("*")
     .eq("google_id", googleId)
-    .single();
+    .maybeSingle();
   if (error) return null;
   return data;
 }
@@ -172,7 +172,7 @@ async function classifyWithAI(apiKey, title, authors, description) {
         "anthropic-dangerous-direct-browser-access": "true"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1000,
         messages: [{ role: "user", content: `Classifique este livro em tropes e generos literarios.
 
