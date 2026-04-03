@@ -240,7 +240,7 @@ async function searchGoogleBooks(query) {
     // Dispara análise de qualidade em background para livros ainda não verificados
     for (const book of deduped) {
       const entry = catalogMap.get(book.googleId);
-      if (!entry || !entry.quality_checked) {
+      if ((!entry || !entry.quality_checked) && book.googleId && book.title) {
         fetch("/api/quality", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
