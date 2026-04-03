@@ -139,7 +139,9 @@ async function searchGoogleBooks(query) {
     ]);
     const [dataPt, dataAll] = await Promise.all([resPt.json(), resAll.json()]);
 
-    const normalize = str => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s/g, "");
+    const norm = str => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s/g, "");
+    const normTitle = str => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/\([^)]*\)/g, "").replace(/\bvol\.?\b/g, "").replace(/[0-9]/g, "").replace(/[^\w]/g, "").replace(/\s/g, "");
 
     const parseItems = (items, isPt) => (items || []).map(item => {
       const v = item.volumeInfo;
@@ -159,10 +161,10 @@ async function searchGoogleBooks(query) {
 
     const all = [...parseItems(dataPt.items, true), ...parseItems(dataAll.items, false)];
 
-    // Filtra menos de 50 páginas
+    // Filtra pageCount ausente ou menor que 50
     const filtered = all.filter(b => b.pageCount >= 50);
 
-    // Deduplicação dupla: primeiro por ISBN-13, depois por título+autor normalizado
+    // Deduplicação dupla: primeiro por ISBN-13, depois por título normalizado+autor normalizado
     const byIsbn = new Map();
     const byTitleAuthor = new Map();
     for (const book of filtered) {
@@ -170,14 +172,14 @@ async function searchGoogleBooks(query) {
         const existing = byIsbn.get(book.isbn);
         if (!existing || book.pageCount > existing.pageCount) byIsbn.set(book.isbn, book);
       } else {
-        const taKey = normalize(book.title + (book.authors[0] || ""));
+        const taKey = normTitle(book.title) + norm(book.authors[0] || "");
         const existing = byTitleAuthor.get(taKey);
         if (!existing || book.pageCount > existing.pageCount) byTitleAuthor.set(taKey, book);
       }
     }
     // Remove do byTitleAuthor entradas que duplicam um ISBN já presente
     for (const book of byIsbn.values()) {
-      const taKey = normalize(book.title + (book.authors[0] || ""));
+      const taKey = normTitle(book.title) + norm(book.authors[0] || "");
       byTitleAuthor.delete(taKey);
     }
     const deduped = [...byIsbn.values(), ...byTitleAuthor.values()];
@@ -191,6 +193,10 @@ async function searchGoogleBooks(query) {
       else if (nt.startsWith(nq)) s += 30;
       else if (nt.includes(nq)) s += 20;
       else if (na.includes(nq)) s += 10;
+      // Penaliza livros "sobre" o tema que não são o livro em si
+      const queryWords = nq.split(/\s+/).filter(w => w.length > 2);
+      const authorHasQuery = queryWords.some(w => na.includes(w));
+      if (!authorHasQuery && nt.includes(nq) && nt !== nq && !nt.startsWith(nq)) s -= 15;
       if (book.isPt) s += 8;
       if (book.cover) s += 5;
       if (book.description.length > 100) s += 3;
