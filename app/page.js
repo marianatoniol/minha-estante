@@ -1,5 +1,6 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
+import { supabase } from "./supabase";
 
 const TROPES_LIST = [
   "enemies to lovers","slow burn","forced proximity","found family","friends to lovers",
@@ -38,18 +39,71 @@ function getGradient(title) {
   return COVER_GRADIENTS[Math.abs(hash) % COVER_GRADIENTS.length];
 }
 
-const STORAGE_KEY = "minha-estante-books";
+// ─── Supabase helpers ─────────────────────────────────────────────────────────
 
-function loadBooks() {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    return Array.isArray(raw) ? raw : [];
-  } catch { return []; }
+function toDb(book) {
+  return {
+    id: book.id,
+    google_id: book.googleId || null,
+    title: book.title,
+    authors: book.authors ? JSON.stringify(book.authors) : null,
+    description: book.description || null,
+    cover: book.cover || null,
+    published_date: book.publishedDate || null,
+    page_count: book.pageCount || 0,
+    status: book.status,
+    genres: book.genres ? JSON.stringify(book.genres) : null,
+    tropes: book.tropes ? JSON.stringify(book.tropes) : null,
+    summary: book.summary || null,
+    rating: book.rating || 0,
+    added_at: book.addedAt || new Date().toISOString(),
+  };
 }
-function saveBooks(books) {
-  if (typeof window !== "undefined") localStorage.setItem(STORAGE_KEY, JSON.stringify(books));
+
+function fromDb(row) {
+  return {
+    id: row.id,
+    googleId: row.google_id,
+    title: row.title,
+    authors: row.authors ? JSON.parse(row.authors) : [],
+    description: row.description || "",
+    cover: row.cover || null,
+    publishedDate: row.published_date || "",
+    pageCount: row.page_count || 0,
+    status: row.status,
+    genres: row.genres ? JSON.parse(row.genres) : [],
+    tropes: row.tropes ? JSON.parse(row.tropes) : [],
+    summary: row.summary || "",
+    rating: row.rating || 0,
+    addedAt: row.added_at,
+  };
 }
+
+async function fetchBooks() {
+  const { data, error } = await supabase
+    .from("books")
+    .select("*")
+    .order("added_at", { ascending: false });
+  if (error) { console.error("fetchBooks error:", error); return []; }
+  return data.map(fromDb);
+}
+
+async function insertBook(book) {
+  const { error } = await supabase.from("books").insert(toDb(book));
+  if (error) console.error("insertBook error:", error);
+}
+
+async function updateBookInDb(book) {
+  const { error } = await supabase.from("books").update(toDb(book)).eq("id", book.id);
+  if (error) console.error("updateBook error:", error);
+}
+
+async function deleteBookFromDb(id) {
+  const { error } = await supabase.from("books").delete().eq("id", id);
+  if (error) console.error("deleteBook error:", error);
+}
+
+// ─── Google Books ──────────────────────────────────────────────────────────────
 
 async function searchGoogleBooks(query) {
   try {
@@ -71,6 +125,8 @@ async function searchGoogleBooks(query) {
     });
   } catch { return []; }
 }
+
+// ─── Claude AI ────────────────────────────────────────────────────────────────
 
 async function classifyWithAI(apiKey, title, authors, description) {
   try {
@@ -103,6 +159,8 @@ Selecione de 1 a 3 generos e de 2 a 5 tropes que melhor descrevem o livro.` }],
     return { genres: [], tropes: [], summary: "" };
   }
 }
+
+// ─── UI Components ────────────────────────────────────────────────────────────
 
 function TagPill({ label, color = "purple" }) {
   const colors = {
@@ -176,7 +234,6 @@ function BottomNav({ active, onNavigate }) {
         }}>
           <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
             <path d={it.icon} />
-            {it.key === "explore" ? null : null}
           </svg>
           {it.label}
         </div>
@@ -185,7 +242,9 @@ function BottomNav({ active, onNavigate }) {
   );
 }
 
-function HomeScreen({ books, onNavigate, onSelectBook, onAdd, statusFilter, setStatusFilter }) {
+// ─── Screens ──────────────────────────────────────────────────────────────────
+
+function HomeScreen({ books, loading, onSelectBook, onAdd, statusFilter, setStatusFilter }) {
   const [search, setSearch] = useState("");
   const filtered = books.filter(b => {
     if (statusFilter && b.status !== statusFilter) return false;
@@ -232,41 +291,50 @@ function HomeScreen({ books, onNavigate, onSelectBook, onAdd, statusFilter, setS
           }}>{f.label}</div>
         ))}
       </div>
-      <div style={{ padding: "0 20px 6px", fontSize: 13, color: "var(--color-text-secondary,#666)" }}>
-        {filtered.length} {filtered.length === 1 ? "livro" : "livros"} na estante
-      </div>
-      {filtered.length === 0 ? (
+
+      {loading ? (
         <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--color-text-tertiary,#999)" }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>📚</div>
-          <div style={{ fontSize: 15, marginBottom: 4 }}>Sua estante esta vazia</div>
-          <div style={{ fontSize: 13 }}>Toque no <strong>+</strong> pra adicionar seu primeiro livro</div>
+          <div style={{ fontSize: 14 }}>Carregando sua estante...</div>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, padding: "0 20px 20px" }}>
-          {filtered.map(book => (
-            <div key={book.id} onClick={() => onSelectBook(book)} style={{ cursor: "pointer", textAlign: "center" }}>
-              <div style={{
-                width: "100%", aspectRatio: "2/3", borderRadius: 10, position: "relative",
-                background: book.cover ? `url(${book.cover}) center/cover` : getGradient(book.title),
-                overflow: "hidden",
-              }}>
-                <StatusDot status={book.status} />
-              </div>
-              <div style={{ fontSize: 12, fontWeight: 500, marginTop: 6, lineHeight: 1.3,
-                display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                {book.title}
-              </div>
-              <div style={{ fontSize: 11, color: "var(--color-text-tertiary,#999)", marginTop: 2 }}>
-                {book.authors?.[0] || ""}
-              </div>
-              {book.genres?.[0] && (
-                <div style={{ display: "flex", gap: 3, justifyContent: "center", marginTop: 4, flexWrap: "wrap" }}>
-                  <TagPill label={book.genres[0]} color={GENRE_COLORS[book.genres[0]] || "purple"} />
-                </div>
-              )}
+        <>
+          <div style={{ padding: "0 20px 6px", fontSize: 13, color: "var(--color-text-secondary,#666)" }}>
+            {filtered.length} {filtered.length === 1 ? "livro" : "livros"} na estante
+          </div>
+          {filtered.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--color-text-tertiary,#999)" }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>📚</div>
+              <div style={{ fontSize: 15, marginBottom: 4 }}>Sua estante esta vazia</div>
+              <div style={{ fontSize: 13 }}>Toque no <strong>+</strong> pra adicionar seu primeiro livro</div>
             </div>
-          ))}
-        </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14, padding: "0 20px 20px" }}>
+              {filtered.map(book => (
+                <div key={book.id} onClick={() => onSelectBook(book)} style={{ cursor: "pointer", textAlign: "center" }}>
+                  <div style={{
+                    width: "100%", aspectRatio: "2/3", borderRadius: 10, position: "relative",
+                    background: book.cover ? `url(${book.cover}) center/cover` : getGradient(book.title),
+                    overflow: "hidden",
+                  }}>
+                    <StatusDot status={book.status} />
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 500, marginTop: 6, lineHeight: 1.3,
+                    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                    {book.title}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--color-text-tertiary,#999)", marginTop: 2 }}>
+                    {book.authors?.[0] || ""}
+                  </div>
+                  {book.genres?.[0] && (
+                    <div style={{ display: "flex", gap: 3, justifyContent: "center", marginTop: 4, flexWrap: "wrap" }}>
+                      <TagPill label={book.genres[0]} color={GENRE_COLORS[book.genres[0]] || "purple"} />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -543,7 +611,7 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
       <div style={{ padding: "0 20px 16px" }}>
         <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Tropes</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {(editing ? (showAllTropes ? TROPES_LIST : [...new Set([...customTropes, ...TROPES_LIST.slice(0, 10)])] ) : customTropes).map(t => (
+          {(editing ? (showAllTropes ? TROPES_LIST : [...new Set([...customTropes, ...TROPES_LIST.slice(0, 10)])]) : customTropes).map(t => (
             <div key={t} onClick={() => editing && toggleTrope(t)} style={{
               fontSize: 11, padding: "4px 12px", borderRadius: 12, cursor: editing ? "pointer" : "default",
               background: customTropes.includes(t) ? (TROPE_COLORS[t] === "pink" ? "#FBEAF0" : TROPE_COLORS[t] === "coral" ? "#FAECE7" : TROPE_COLORS[t] === "teal" ? "#E1F5EE" : TROPE_COLORS[t] === "amber" ? "#FAEEDA" : TROPE_COLORS[t] === "gray" ? "#F1EFE8" : TROPE_COLORS[t] === "red" ? "#FCEBEB" : TROPE_COLORS[t] === "blue" ? "#E6F1FB" : "#EEEDFE") : "var(--color-background-secondary,#f5f5f5)",
@@ -646,10 +714,7 @@ function ExploreScreen({ books, onSelectBook }) {
             </div>
           )}
 
-          <div style={{
-            padding: "0 20px", borderTop: "0.5px solid var(--color-border-tertiary,#e5e5e5)",
-            paddingTop: 16,
-          }}>
+          <div style={{ padding: "0 20px", borderTop: "0.5px solid var(--color-border-tertiary,#e5e5e5)", paddingTop: 16 }}>
             <div style={{ fontSize: 13, color: "var(--color-text-secondary,#666)", marginBottom: 12 }}>
               {filtered.length} {filtered.length === 1 ? "livro encontrado" : "livros encontrados"}
               {selectedTropes.length > 0 && ` com ${selectedTropes.join(" + ")}`}
@@ -685,8 +750,6 @@ function ExploreScreen({ books, onSelectBook }) {
 }
 
 function RecoScreen({ books, onSelectBook }) {
-  const readBooks = books.filter(b => b.status === "lido" || b.rating >= 3);
-
   if (books.length < 2) {
     return (
       <div style={{ paddingBottom: 8 }}>
@@ -751,10 +814,7 @@ function RecoScreen({ books, onSelectBook }) {
                 padding: "6px 12px", borderRadius: 16, background: "#EEEDFE",
               }}>
                 <span style={{ fontSize: 12, color: "#3C3489" }}>{trope}</span>
-                <span style={{
-                  fontSize: 10, padding: "1px 6px", borderRadius: 8,
-                  background: "#AFA9EC", color: "#26215C",
-                }}>{count}</span>
+                <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: "#AFA9EC", color: "#26215C" }}>{count}</span>
               </div>
             ))}
           </div>
@@ -764,9 +824,7 @@ function RecoScreen({ books, onSelectBook }) {
       {recommendations.length > 0 ? (
         <div style={{ padding: "0 20px" }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Livros semelhantes na sua estante</div>
-          <div style={{ fontSize: 13, color: "var(--color-text-secondary,#666)", marginBottom: 12 }}>
-            Baseado nas tropes em comum
-          </div>
+          <div style={{ fontSize: 13, color: "var(--color-text-secondary,#666)", marginBottom: 12 }}>Baseado nas tropes em comum</div>
           {recommendations.slice(0, 6).map(({ book, similarity, basedOn }) => (
             <div key={book.id} onClick={() => onSelectBook(book)} style={{
               display: "flex", gap: 12, padding: 14, marginBottom: 10,
@@ -779,9 +837,7 @@ function RecoScreen({ books, onSelectBook }) {
               }} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 14, fontWeight: 500 }}>{book.title}</div>
-                <div style={{ fontSize: 12, color: "var(--color-text-secondary,#666)", marginTop: 2 }}>
-                  {book.authors?.join(", ")}
-                </div>
+                <div style={{ fontSize: 12, color: "var(--color-text-secondary,#666)", marginTop: 2 }}>{book.authors?.join(", ")}</div>
                 <div style={{ fontSize: 11, color: "var(--color-text-tertiary,#999)", marginTop: 4, fontStyle: "italic" }}>
                   Parecido com "{basedOn.title}"
                 </div>
@@ -793,9 +849,7 @@ function RecoScreen({ books, onSelectBook }) {
                 <div style={{ height: 4, borderRadius: 2, background: "var(--color-background-secondary,#f0f0f0)", marginTop: 8 }}>
                   <div style={{ height: "100%", borderRadius: 2, background: "#534AB7", width: `${similarity}%` }} />
                 </div>
-                <div style={{ fontSize: 11, color: "#534AB7", fontWeight: 500, marginTop: 3 }}>
-                  {similarity}% compativel
-                </div>
+                <div style={{ fontSize: 11, color: "#534AB7", fontWeight: 500, marginTop: 3 }}>{similarity}% compativel</div>
               </div>
             </div>
           ))}
@@ -816,12 +870,12 @@ function ConfigScreen({ apiKey, setApiKey }) {
 
   const handleSave = () => {
     setApiKey(input);
-    localStorage.setItem("minha-estante-api-key", input);
+    if (typeof window !== "undefined") localStorage.setItem("minha-estante-api-key", input);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
-  const maskedValue = input ? input.slice(0, 7) + "\u2022".repeat(Math.max(0, input.length - 11)) + input.slice(-4) : "";
+  const maskedValue = input ? input.slice(0, 7) + "•".repeat(Math.max(0, input.length - 11)) + input.slice(-4) : "";
 
   return (
     <div style={{ paddingBottom: 20 }}>
@@ -834,10 +888,7 @@ function ConfigScreen({ apiKey, setApiKey }) {
       </div>
 
       <div style={{ padding: "0 20px" }}>
-        <div style={{
-          padding: 16, borderRadius: 12, background: "var(--color-background-secondary,#f5f5f5)",
-          marginBottom: 16,
-        }}>
+        <div style={{ padding: 16, borderRadius: 12, background: "var(--color-background-secondary,#f5f5f5)", marginBottom: 16 }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Chave da API Anthropic</div>
           <div style={{ fontSize: 12, color: "var(--color-text-secondary,#666)", marginBottom: 12, lineHeight: 1.5 }}>
             Necessaria pra classificar livros automaticamente por tropes usando IA. Sua chave fica salva apenas no seu dispositivo.
@@ -855,28 +906,17 @@ function ConfigScreen({ apiKey, setApiKey }) {
                 border: "0.5px solid var(--color-border-tertiary,#ddd)",
                 fontSize: 13, outline: "none", resize: "none",
                 color: "var(--color-text-primary,#222)",
-                fontFamily: "var(--font-mono, monospace)",
-                lineHeight: 1.5, wordBreak: "break-all",
+                fontFamily: "monospace", lineHeight: 1.5, wordBreak: "break-all",
               }}
             />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <div onClick={() => setShowKey(!showKey)} style={{
-              display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
-              fontSize: 13, color: "#534AB7",
-            }}>
+            <div onClick={() => setShowKey(!showKey)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, color: "#534AB7" }}>
               <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
                 {showKey ? (
-                  <>
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </>
+                  <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
                 ) : (
-                  <>
-                    <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/>
-                    <path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/>
-                    <line x1="1" y1="1" x2="23" y2="23"/>
-                  </>
+                  <><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></>
                 )}
               </svg>
               {showKey ? "Esconder chave" : "Mostrar chave"}
@@ -889,35 +929,26 @@ function ConfigScreen({ apiKey, setApiKey }) {
           }}>{saved ? "Salvo!" : "Salvar chave"}</button>
         </div>
 
-        <div style={{
-          padding: 16, borderRadius: 12, background: "var(--color-background-secondary,#f5f5f5)",
-          marginBottom: 16,
-        }}>
+        <div style={{ padding: 16, borderRadius: 12, background: "var(--color-background-secondary,#f5f5f5)", marginBottom: 16 }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Sobre o app</div>
           <div style={{ fontSize: 13, color: "var(--color-text-secondary,#666)", lineHeight: 1.6 }}>
             Minha Estante e sua biblioteca pessoal inteligente. Adicione livros, classifique por tropes com ajuda de IA, e descubra livros parecidos na sua colecao.
           </div>
         </div>
 
-        <div style={{
-          padding: 16, borderRadius: 12, border: "0.5px solid var(--color-border-danger,#f5c1c1)",
-          background: "var(--color-background-danger,#fcebeb)",
-        }}>
-          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4, color: "var(--color-text-danger,#a32d2d)" }}>
-            Limpar dados
-          </div>
+        <div style={{ padding: 16, borderRadius: 12, border: "0.5px solid #f5c1c1", background: "#fcebeb" }}>
+          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4, color: "#a32d2d" }}>Limpar dados</div>
           <div style={{ fontSize: 12, color: "var(--color-text-secondary,#666)", marginBottom: 10 }}>
             Remove todos os livros da sua estante. Esta acao nao pode ser desfeita.
           </div>
-          <button onClick={() => {
+          <button onClick={async () => {
             if (confirm("Tem certeza? Todos os livros serao removidos.")) {
-              localStorage.removeItem(STORAGE_KEY);
+              await supabase.from("books").delete().neq("id", "");
               window.location.reload();
             }
           }} style={{
             padding: "8px 20px", borderRadius: 8, border: "none",
-            background: "var(--color-text-danger,#a32d2d)", color: "white",
-            fontSize: 13, cursor: "pointer",
+            background: "#a32d2d", color: "white", fontSize: 13, cursor: "pointer",
           }}>Limpar tudo</button>
         </div>
       </div>
@@ -925,67 +956,69 @@ function ConfigScreen({ apiKey, setApiKey }) {
   );
 }
 
+// ─── App Root ─────────────────────────────────────────────────────────────────
+
 export default function App() {
-  const [books, setBooks] = useState(loadBooks);
+  const [books, setBooks] = useState([]);
+  const [loadingBooks, setLoadingBooks] = useState(true);
   const [screen, setScreen] = useState("home");
   const [selectedBook, setSelectedBook] = useState(null);
   const [statusFilter, setStatusFilter] = useState("");
-  const [apiKey, setApiKey] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("minha-estante-api-key") : "") || "");
+  const [apiKey, setApiKey] = useState(() =>
+    typeof window !== "undefined" ? localStorage.getItem("minha-estante-api-key") || "" : ""
+  );
   const scrollRef = useRef(null);
 
-  useEffect(() => { saveBooks(books); }, [books]);
+  useEffect(() => {
+    fetchBooks().then(data => {
+      setBooks(data);
+      setLoadingBooks(false);
+    });
+  }, []);
+
   useEffect(() => { scrollRef.current?.scrollTo(0, 0); }, [screen, selectedBook]);
 
   const navigate = (s) => { setScreen(s); setSelectedBook(null); };
 
-  const addBook = (book) => {
+  const addBook = async (book) => {
+    await insertBook(book);
     setBooks(prev => [book, ...prev]);
     setScreen("home");
   };
 
-  const updateBook = (updated) => {
+  const updateBook = async (updated) => {
+    await updateBookInDb(updated);
     setBooks(prev => prev.map(b => b.id === updated.id ? updated : b));
     setSelectedBook(updated);
   };
 
-  const deleteBook = (id) => {
+  const deleteBook = async (id) => {
+    await deleteBookFromDb(id);
     setBooks(prev => prev.filter(b => b.id !== id));
   };
 
-  const activeTab = screen === "add" ? "home" : screen === "detail" ? "home" : screen;
+  const activeTab = ["add", "detail"].includes(screen) ? "home" : screen;
 
   return (
     <div style={{
-      maxWidth: 430, margin: "0 auto", fontFamily: "'Anthropic Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+      maxWidth: 430, margin: "0 auto",
+      fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif",
       minHeight: "100vh", display: "flex", flexDirection: "column",
       background: "var(--color-background-primary, #fff)",
       color: "var(--color-text-primary, #222)",
     }}>
       <div ref={scrollRef} style={{ flex: 1, paddingTop: 16, paddingBottom: 64, overflowY: "auto" }}>
         {screen === "home" && (
-          <HomeScreen books={books} onNavigate={navigate}
-            onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }}
-            onAdd={() => setScreen("add")}
-            statusFilter={statusFilter} setStatusFilter={setStatusFilter}
-          />
+          <HomeScreen books={books} loading={loadingBooks} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }}
+            onAdd={() => setScreen("add")} statusFilter={statusFilter} setStatusFilter={setStatusFilter} />
         )}
-        {screen === "add" && (
-          <AddBookScreen onBack={() => setScreen("home")} onSave={addBook} apiKey={apiKey} />
-        )}
+        {screen === "add" && <AddBookScreen onBack={() => setScreen("home")} onSave={addBook} apiKey={apiKey} />}
         {screen === "detail" && selectedBook && (
-          <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")}
-            onUpdate={updateBook} onDelete={deleteBook}
-          />
+          <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")} onUpdate={updateBook} onDelete={deleteBook} />
         )}
-        {screen === "explore" && (
-          <ExploreScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />
-        )}
-        {screen === "reco" && (
-          <RecoScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />
-        )}
-        {screen === "config" && (
-          <ConfigScreen apiKey={apiKey} setApiKey={setApiKey} />
-        )}
+        {screen === "explore" && <ExploreScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
+        {screen === "reco" && <RecoScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
+        {screen === "config" && <ConfigScreen apiKey={apiKey} setApiKey={setApiKey} />}
       </div>
       <BottomNav active={activeTab} onNavigate={navigate} />
     </div>
