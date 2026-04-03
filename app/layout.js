@@ -28,6 +28,9 @@ export default function RootLayout({ children }) {
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="Minha Estante" />
         <link rel="apple-touch-icon" href="/icon-192.png" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Roboto:wght@400;500;600&display=swap" rel="stylesheet" />
       </head>
       <body>{children}</body>
     </html>

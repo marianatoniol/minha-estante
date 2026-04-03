@@ -420,7 +420,7 @@ function HomeScreen({ books, loading, onSelectBook, onSearch, statusFilter, setS
   return (
     <div style={{ paddingBottom: 8 }}>
       <div style={{ padding: "0 20px 14px" }}>
-        <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: -0.5, marginBottom: 12 }}>O que você quer ler hoje?</h1>
+        <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: -0.5, marginBottom: 12, fontFamily: "'Abril Fatface', cursive" }}>O que você quer ler hoje?</h1>
         <div style={{ display: "flex", gap: 8 }}>
           <div style={{ flex: 1, position: "relative" }}>
             <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth={2} style={{ position: "absolute", left: 12, top: 11 }}>
