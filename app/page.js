@@ -162,9 +162,23 @@ async function searchGoogleBooks(query) {
       if (!existing || book.pageCount > existing.pageCount) groups.set(key, book);
     }
 
+    const nq = query.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const score = book => {
+      const nt = book.title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const na = book.authors.join(" ").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      let s = 0;
+      if (nt === nq) s += 40;
+      else if (nt.startsWith(nq)) s += 30;
+      else if (nt.includes(nq)) s += 20;
+      else if (na.includes(nq)) s += 10;
+      if (book.cover) s += 5;
+      if (book.description.length > 100) s += 3;
+      return s;
+    };
+
     return [...groups.values()]
-      .sort((a, b) => (b.cover ? 1 : 0) - (a.cover ? 1 : 0) || b.pageCount - a.pageCount)
-      .slice(0, 6);
+      .sort((a, b) => score(b) - score(a))
+      .slice(0, 15);
   } catch { return []; }
 }
 
@@ -382,6 +396,7 @@ function AddBookScreen({ onBack, onSave, myBooks }) {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(null);
   const [status, setStatus] = useState("quero ler");
+  const [sortOrder, setSortOrder] = useState("relevance");
   const [classification, setClassification] = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -466,8 +481,24 @@ function AddBookScreen({ onBack, onSave, myBooks }) {
 
           {results.length > 0 && (
             <div style={{ padding: "0 20px" }}>
-              <div style={{ fontSize: 13, color: "#666", marginBottom: 10 }}>{results.length} resultados encontrados</div>
-              {results.map(r => {
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <div style={{ fontSize: 13, color: "#666" }}>{results.length} resultados encontrados</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {["relevance", "recent"].map(opt => (
+                    <button key={opt} onClick={() => setSortOrder(opt)} style={{
+                      fontSize: 12, padding: "3px 10px", borderRadius: 20, cursor: "pointer",
+                      border: "0.5px solid #ccc",
+                      background: sortOrder === opt ? "#534AB7" : "transparent",
+                      color: sortOrder === opt ? "#fff" : "#666",
+                      fontWeight: sortOrder === opt ? 500 : 400,
+                    }}>{opt === "relevance" ? "Relevancia" : "Mais recentes"}</button>
+                  ))}
+                </div>
+              </div>
+              {(sortOrder === "recent"
+                ? [...results].sort((a, b) => (b.publishedDate || "").localeCompare(a.publishedDate || ""))
+                : results
+              ).map(r => {
                 const inShelf = myBookIds.has(r.googleId);
                 return (
                   <div key={r.googleId} onClick={() => openBook(r)} style={{
