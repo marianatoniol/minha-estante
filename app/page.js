@@ -229,18 +229,48 @@ async function searchGoogleBooks(query) {
       return s;
     };
 
-    // Busca engajamento do catálogo para os resultados encontrados
+    // Busca engajamento e qualidade do catálogo para os resultados encontrados
     const googleIds = deduped.map(b => b.googleId);
     const { data: catalogRows } = await supabase
       .from("books_catalog")
-      .select("google_id, view_count, save_count")
+      .select("google_id, view_count, save_count, quality_checked, is_spam, quality_score")
       .in("google_id", googleIds);
-    const engagementMap = new Map(
-      (catalogRows || []).map(r => [r.google_id, (r.view_count || 0) + (r.save_count || 0) * 2])
-    );
+    const catalogMap = new Map((catalogRows || []).map(r => [r.google_id, r]));
+
+    // Dispara análise de qualidade em background para livros ainda não verificados
+    for (const book of deduped) {
+      const entry = catalogMap.get(book.googleId);
+      if (!entry || !entry.quality_checked) {
+        fetch("/api/quality", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: book.title, authors: book.authors.join(", "), description: book.description, pageCount: book.pageCount }),
+        })
+          .then(r => r.json())
+          .then(({ is_spam, quality_score }) =>
+            supabase.from("books_catalog").upsert(
+              { google_id: book.googleId, quality_checked: true, is_spam: is_spam ?? false, quality_score: quality_score ?? 5 },
+              { onConflict: "google_id" }
+            ).then(({ error }) => { if (error) console.error("quality upsert error:", error); })
+          )
+          .catch(e => console.error("quality bg error:", e));
+      }
+    }
+
+    const totalScore = book => {
+      const entry = catalogMap.get(book.googleId);
+      const engagement = entry ? (entry.view_count || 0) + (entry.save_count || 0) * 2 : 0;
+      const quality = entry?.quality_checked ? (entry.quality_score || 0) : 0;
+      const spamPenalty = entry?.is_spam ? 50 : 0;
+      return score(book) + engagement + quality - spamPenalty;
+    };
 
     return deduped
-      .sort((a, b) => (score(b) + (engagementMap.get(b.googleId) || 0)) - (score(a) + (engagementMap.get(a.googleId) || 0)))
+      .filter(b => {
+        const entry = catalogMap.get(b.googleId);
+        return !(entry?.is_spam && (entry?.quality_score ?? 10) < 3);
+      })
+      .sort((a, b) => totalScore(b) - totalScore(a))
       .slice(0, 15);
   } catch { return []; }
 }
