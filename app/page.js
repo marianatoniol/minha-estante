@@ -1069,7 +1069,101 @@ function RecoScreen({ books, onSelectBook }) {
 
 // ─── Config Screen ────────────────────────────────────────────────────────────
 
-function ConfigScreen() {
+function ConfigScreen({ books, onImportBook }) {
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const normTitleSimple = (s) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+
+  const handleCsvImport = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+
+    let rows = lines.map(l => {
+      const parts = l.split(",");
+      return { title: (parts[0] || "").replace(/^"|"$/g, "").trim(), author: (parts[1] || "").replace(/^"|"$/g, "").trim() };
+    }).filter(r => r.title);
+
+    // Tolera header
+    if (rows.length > 0 && /^(t[ií]tulo?|title|nome|book)/i.test(rows[0].title)) {
+      rows = rows.slice(1);
+    }
+
+    if (rows.length === 0) return;
+
+    const existingTitles = new Set(books.map(b => normTitleSimple(b.title)));
+    setImporting(true);
+    setImportProgress(null);
+    let imported = 0;
+    let skipped = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+      const { title, author } = rows[i];
+      setImportProgress({ current: i + 1, total: rows.length, title });
+
+      if (existingTitles.has(normTitleSimple(title))) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        const key = process.env.NEXT_PUBLIC_GOOGLE_BOOKS_API_KEY;
+        const q = author ? `${title} ${author}` : title;
+        const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&key=${key}&maxResults=1`);
+        const data = await res.json();
+        const item = data.items?.[0];
+
+        if (!item) {
+          skipped++;
+        } else {
+          const v = item.volumeInfo;
+          const book = {
+            id: Date.now().toString() + i,
+            googleId: item.id,
+            title: v.title || title,
+            authors: v.authors || (author ? [author] : []),
+            description: v.description || "",
+            cover: v.imageLinks?.thumbnail?.replace("http:", "https:") || null,
+            publishedDate: v.publishedDate || "",
+            pageCount: v.pageCount || 0,
+            status: "lido",
+            genres: [],
+            tropes: [],
+            summary: "",
+            rating: 0,
+            addedAt: new Date().toISOString(),
+          };
+
+          const cl = await classifyWithAI(book.title, book.authors.join(", "), book.description);
+          book.genres = cl.genres || [];
+          book.tropes = cl.tropes || [];
+          book.summary = cl.summary || "";
+
+          if (book.googleId) {
+            await saveCatalogEntry(book.googleId, book, cl);
+          }
+
+          await onImportBook(book);
+          existingTitles.add(normTitleSimple(book.title));
+          imported++;
+        }
+      } catch (err) {
+        console.error("import error:", err);
+        skipped++;
+      }
+
+      if (i < rows.length - 1) await new Promise(r => setTimeout(r, 500));
+    }
+
+    setImportProgress({ done: true, imported, skipped });
+    setImporting(false);
+    e.target.value = "";
+  };
+
   return (
     <div style={{ paddingBottom: 20 }}>
       <div style={{ padding: "0 20px 16px", display: "flex", alignItems: "center", gap: 10 }}>
@@ -1087,6 +1181,47 @@ function ConfigScreen() {
           <div style={{ fontSize: 13, color: "#666", lineHeight: 1.6 }}>
             Minha Estante e sua biblioteca pessoal inteligente. Adicione livros, classifique por tropes com ajuda de IA, e descubra livros parecidos na sua colecao.
           </div>
+        </div>
+
+        <div style={{ padding: 16, borderRadius: 12, background: "#f5f5f5", marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Importar biblioteca</div>
+          <div style={{ fontSize: 12, color: "#666", marginBottom: 12, lineHeight: 1.5 }}>
+            Importe um CSV com seus livros. Formato esperado: <strong>titulo,autor</strong> (uma linha por livro).
+          </div>
+
+          {importProgress && !importProgress.done && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: "#444", marginBottom: 6 }}>
+                Importando livro {importProgress.current} de {importProgress.total}: <em>{importProgress.title}</em>
+              </div>
+              <div style={{ height: 6, borderRadius: 3, background: "#e0e0e0" }}>
+                <div style={{
+                  height: "100%", borderRadius: 3, background: "#534AB7",
+                  width: `${Math.round((importProgress.current / importProgress.total) * 100)}%`,
+                  transition: "width 0.3s ease",
+                }} />
+              </div>
+            </div>
+          )}
+
+          {importProgress?.done && (
+            <div style={{ padding: "10px 12px", borderRadius: 8, background: "#E1F5EE", marginBottom: 12, fontSize: 13, color: "#085041" }}>
+              {importProgress.imported} {importProgress.imported === 1 ? "livro importado" : "livros importados"}
+              {importProgress.skipped > 0 && `, ${importProgress.skipped} ignorados por ja existirem`}.
+            </div>
+          )}
+
+          <input ref={fileInputRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleCsvImport} />
+          <button
+            disabled={importing}
+            onClick={() => { setImportProgress(null); fileInputRef.current?.click(); }}
+            style={{
+              padding: "9px 20px", borderRadius: 8, border: "0.5px solid #AFA9EC",
+              background: importing ? "#f0f0f0" : "#EEEDFE", color: importing ? "#999" : "#3C3489",
+              fontSize: 13, fontWeight: 500, cursor: importing ? "default" : "pointer",
+            }}>
+            {importing ? "Importando..." : "Escolher arquivo CSV"}
+          </button>
         </div>
 
         <div style={{ padding: 16, borderRadius: 12, border: "0.5px solid #f5c1c1", background: "#fcebeb" }}>
@@ -1142,6 +1277,11 @@ export default function App() {
     setBooks(prev => prev.filter(b => b.id !== id));
   };
 
+  const importBook = async (book) => {
+    await insertBook(book);
+    setBooks(prev => [book, ...prev]);
+  };
+
   const activeTab = ["add", "detail"].includes(screen) ? "home" : screen;
 
   return (
@@ -1165,7 +1305,7 @@ export default function App() {
         )}
         {screen === "explore" && <ExploreScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
         {screen === "reco" && <RecoScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
-        {screen === "config" && <ConfigScreen />}
+        {screen === "config" && <ConfigScreen books={books} onImportBook={importBook} />}
       </div>
       <BottomNav active={activeTab} onNavigate={navigate} />
     </div>
