@@ -145,6 +145,7 @@ async function searchGoogleBooks(query) {
           cover: v.imageLinks?.thumbnail?.replace("http:", "https:") || null,
           publishedDate: v.publishedDate || "",
           pageCount: v.pageCount || 0,
+          isbn: (v.industryIdentifiers?.find(i => i.type === "ISBN_13") || v.industryIdentifiers?.find(i => i.type === "ISBN_10"))?.identifier || null,
         };
       })
       .filter(book => {
