@@ -130,30 +130,41 @@ async function saveCatalogEntry(googleId, bookData, classification) {
 
 async function searchGoogleBooks(query) {
   try {
-    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&langRestrict=pt&maxResults=8&key=${process.env.NEXT_PUBLIC_GOOGLE_BOOKS_API_KEY}`);
+    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15&key=${process.env.NEXT_PUBLIC_GOOGLE_BOOKS_API_KEY}`);
     const data = await res.json();
     if (!data.items) return [];
-    const seen = new Set();
-    return data.items
-      .map(item => {
-        const v = item.volumeInfo;
-        return {
-          googleId: item.id,
-          title: v.title || "",
-          authors: v.authors || [],
-          description: v.description || "",
-          cover: v.imageLinks?.thumbnail?.replace("http:", "https:") || null,
-          publishedDate: v.publishedDate || "",
-          pageCount: v.pageCount || 0,
-          isbn: (v.industryIdentifiers?.find(i => i.type === "ISBN_13") || v.industryIdentifiers?.find(i => i.type === "ISBN_10"))?.identifier || null,
-        };
-      })
-      .filter(book => {
-        const key = (book.title + (book.authors[0] || "")).toLowerCase().replace(/\s/g, "");
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
+
+    const normalize = str => str.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s/g, "");
+
+    const books = data.items.map(item => {
+      const v = item.volumeInfo;
+      const isbn13 = v.industryIdentifiers?.find(i => i.type === "ISBN_13")?.identifier || null;
+      return {
+        googleId: item.id,
+        title: v.title || "",
+        authors: v.authors || [],
+        description: v.description || "",
+        cover: v.imageLinks?.thumbnail?.replace("http:", "https:") || null,
+        publishedDate: v.publishedDate || "",
+        pageCount: v.pageCount || 0,
+        isbn: isbn13,
+      };
+    });
+
+    // Filtra menos de 50 páginas
+    const filtered = books.filter(b => b.pageCount >= 50);
+
+    // Agrupa por ISBN-13 ou título+autor normalizado, mantém o de mais páginas
+    const groups = new Map();
+    for (const book of filtered) {
+      const key = book.isbn || normalize(book.title + (book.authors[0] || ""));
+      const existing = groups.get(key);
+      if (!existing || book.pageCount > existing.pageCount) groups.set(key, book);
+    }
+
+    return [...groups.values()]
+      .sort((a, b) => (b.cover ? 1 : 0) - (a.cover ? 1 : 0) || b.pageCount - a.pageCount)
+      .slice(0, 6);
   } catch { return []; }
 }
 
