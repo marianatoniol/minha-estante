@@ -105,10 +105,22 @@ async function getCatalogEntry(googleId) {
     .eq("google_id", googleId)
     .maybeSingle();
   if (error) return null;
+  if (data) {
+    supabase.from("books_catalog")
+      .update({ view_count: (data.view_count || 0) + 1 })
+      .eq("google_id", googleId)
+      .then(({ error: e }) => { if (e) console.error("view_count error:", e); });
+  }
   return data;
 }
 
 async function saveCatalogEntry(googleId, bookData, classification) {
+  const { data: existing } = await supabase
+    .from("books_catalog")
+    .select("save_count")
+    .eq("google_id", googleId)
+    .maybeSingle();
+
   const entry = {
     google_id: googleId,
     title: bookData.title,
@@ -121,6 +133,7 @@ async function saveCatalogEntry(googleId, bookData, classification) {
     tropes: JSON.stringify(classification.tropes || []),
     summary: classification.summary || null,
     classified_at: new Date().toISOString(),
+    save_count: existing ? (existing.save_count || 0) + 1 : 1,
   };
   const { error } = await supabase.from("books_catalog").upsert(entry, { onConflict: "google_id" });
   if (error) console.error("saveCatalogEntry error:", error);
@@ -216,7 +229,19 @@ async function searchGoogleBooks(query) {
       return s;
     };
 
-    return deduped.sort((a, b) => score(b) - score(a)).slice(0, 15);
+    // Busca engajamento do catálogo para os resultados encontrados
+    const googleIds = deduped.map(b => b.googleId);
+    const { data: catalogRows } = await supabase
+      .from("books_catalog")
+      .select("google_id, view_count, save_count")
+      .in("google_id", googleIds);
+    const engagementMap = new Map(
+      (catalogRows || []).map(r => [r.google_id, (r.view_count || 0) + (r.save_count || 0) * 2])
+    );
+
+    return deduped
+      .sort((a, b) => (score(b) + (engagementMap.get(b.googleId) || 0)) - (score(a) + (engagementMap.get(a.googleId) || 0)))
+      .slice(0, 15);
   } catch { return []; }
 }
 
