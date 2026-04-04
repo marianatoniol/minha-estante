@@ -529,7 +529,7 @@ function SearchInput({ value, onChange, onSearch, placeholder }) {
 
 // ─── Home Screen ──────────────────────────────────────────────────────────────
 
-function HomeScreen({ books, loading, onSelectBook, onSearch, statusFilter, setStatusFilter }) {
+function HomeScreen({ books, loading, onSelectBook, onSearch, statusFilter, setStatusFilter, onGenreClick, onTropeClick }) {
   const [search, setSearch] = useState("");
   const filtered = filterBooks(books, { statusFilter, search });
 
@@ -587,7 +587,7 @@ function HomeScreen({ books, loading, onSelectBook, onSearch, statusFilter, setS
                 <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{book.authors?.[0] || ""}</div>
                 {book.genres?.[0] && (
                   <div style={{ display: "flex", gap: 3, justifyContent: "center", marginTop: 4, flexWrap: "wrap" }}>
-                    <TagPill label={book.genres[0]} color={GENRE_COLORS[book.genres[0]] || "purple"} />
+                    <TagPill label={book.genres[0]} color={GENRE_COLORS[book.genres[0]] || "purple"} onClick={onGenreClick ? (e) => { e.stopPropagation(); onGenreClick(book.genres[0]); } : undefined} />
                   </div>
                 )}
               </div>
@@ -974,13 +974,17 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete, userId, onTropeCli
 
 // ─── Explore Screen ───────────────────────────────────────────────────────────
 
-function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick }) {
+function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeGenre }) {
   const [selectedTropes, setSelectedTropes] = useState(activeTrope ? [activeTrope] : []);
-  const [selectedGenre, setSelectedGenre] = useState("");
+  const [selectedGenre, setSelectedGenre] = useState(activeGenre || "");
 
   useEffect(() => {
     if (activeTrope) setSelectedTropes([activeTrope]);
   }, [activeTrope]);
+
+  useEffect(() => {
+    if (activeGenre !== undefined) setSelectedGenre(activeGenre || "");
+  }, [activeGenre]);
 
   const allTropes = [...new Set(books.flatMap(b => b.tropes || []))].sort();
   const allGenres = [...new Set(books.flatMap(b => b.genres || []))].sort();
@@ -1391,6 +1395,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchType, setSearchType] = useState("title");
   const [activeTrope, setActiveTrope] = useState(null);
+  const [activeGenre, setActiveGenre] = useState(null);
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -1432,6 +1437,7 @@ export default function App() {
   };
 
   const handleTropeClick = (trope) => { setActiveTrope(trope); setScreen("explore"); setSelectedBook(null); };
+  const handleGenreClick = (genre) => { setActiveGenre(genre); setScreen("explore"); setSelectedBook(null); };
 
   const activeTab = ["add", "detail"].includes(screen) ? "home" : screen;
 
@@ -1458,6 +1464,7 @@ export default function App() {
             onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }}
             onSearch={(term, type) => { setSearchQuery(term); setSearchType(type); setScreen("add"); }}
             statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+            onGenreClick={handleGenreClick} onTropeClick={handleTropeClick}
           />
         )}
         {screen === "add" && (
@@ -1466,7 +1473,7 @@ export default function App() {
         {screen === "detail" && selectedBook && (
           <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")} onUpdate={updateBook} onDelete={deleteBook} userId={session.user.id} onTropeClick={handleTropeClick} />
         )}
-        {screen === "explore" && <ExploreScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} activeTrope={activeTrope} onTropeClick={handleTropeClick} />}
+        {screen === "explore" && <ExploreScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} activeTrope={activeTrope} onTropeClick={handleTropeClick} activeGenre={activeGenre} />}
         {screen === "reco" && <RecoScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
         {screen === "config" && <ConfigScreen books={books} onImportBook={importBook} session={session} supabaseClient={supabaseAuth} />}
       </div>
