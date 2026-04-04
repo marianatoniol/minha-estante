@@ -473,8 +473,9 @@ function BottomNav({ active, onNavigate }) {
 // ─── SearchInput ──────────────────────────────────────────────────────────────
 
 function SearchInput({ value, onChange, onSearch, placeholder }) {
+  const [open, setOpen] = useState(false);
   const term = value.trim();
-  const showDropdown = term.length > 0;
+  const showDropdown = open && term.length > 0;
 
   const options = [
     { icon: "📖", label: "como título", type: "title" },
@@ -490,8 +491,8 @@ function SearchInput({ value, onChange, onSearch, placeholder }) {
       </svg>
       <input
         value={value}
-        onChange={e => onChange(e.target.value)}
-        onKeyDown={e => e.key === "Enter" && term && onSearch(term, "title")}
+        onChange={e => { setOpen(true); onChange(e.target.value); }}
+        onKeyDown={e => { if (e.key === "Enter" && term) { setOpen(false); onSearch(term, "title"); } }}
         placeholder={placeholder}
         style={{ width: "100%", padding: "10px 14px 10px 36px", borderRadius: 10, background: "#f5f5f5", border: "none", fontSize: 14, outline: "none" }}
       />
@@ -504,7 +505,7 @@ function SearchInput({ value, onChange, onSearch, placeholder }) {
           {options.map((opt, i) => (
             <div
               key={opt.type}
-              onMouseDown={() => onSearch(term, opt.type)}
+              onMouseDown={() => { setOpen(false); onSearch(term, opt.type); }}
               style={{
                 padding: "12px 16px", fontSize: 14, cursor: "pointer",
                 borderBottom: i < options.length - 1 ? "0.5px solid #f0f0f0" : "none",
