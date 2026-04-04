@@ -5,19 +5,9 @@ import { getGradient, filterBooks, filterByExplore, buildRecommendations, normal
 
 const supabaseAuth = createClient();
 
-const TROPES_LIST = [
-  "enemies to lovers","slow burn","forced proximity","found family","friends to lovers",
-  "segunda chance","amor proibido","fake dating","only one bed","grumpy x sunshine",
-  "morally grey","escolhida","mundo oculto","fantasia epica","fantasia urbana",
-  "romance de epoca","magia elemental","fae romance","vampiros","lobisomens",
-  "academia de magia","heroina forte","dark romance","marriage of convenience",
-  "rivals to lovers","narrador duvidoso","distopia","pos-apocaliptico",
-  "realismo magico","viagem no tempo","recontagem de mito"
-];
 
-
-const STATUS_COLORS = { lendo: "#639922", "quero ler": "#378ADD", lido: "#888780" };
-const STATUS_LABELS = { lendo: "Lendo", "quero ler": "Quero ler", lido: "Lido" };
+const STATUS_COLORS = { "quero ler": "#378ADD", lido: "#888780" };
+const STATUS_LABELS = { "quero ler": "Quero ler", lido: "Lido" };
 
 
 // ─── Supabase: estante pessoal ────────────────────────────────────────────────
@@ -738,12 +728,8 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
 
 // ─── Book Detail Screen ───────────────────────────────────────────────────────
 
-function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
-  const [editing, setEditing] = useState(false);
-  const [status, setStatus] = useState(book.status);
+function BookDetailScreen({ book, onBack, onUpdate, onDelete, userId }) {
   const [rating, setRating] = useState(book.rating || 0);
-  const [customTropes, setCustomTropes] = useState(book.tropes || []);
-  const [showAllTropes, setShowAllTropes] = useState(false);
 
   useEffect(() => {
     if (book.genres && book.genres.length > 0) return;
@@ -762,33 +748,15 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
     })();
   }, [book.id]);
 
-  const handleSave = () => {
-    onUpdate({ ...book, status, rating, tropes: customTropes });
-    setEditing(false);
-  };
-
-  const getTropeStyle = (t, selected) => {
-    const color = TROPE_COLORS[t];
-    const c = TAG_COLOR_STYLES[color] || TAG_COLOR_STYLES.purple;
-    return selected
-      ? { background: c.bg, color: c.text, border: "none" }
-      : { background: "#f5f5f5", color: "#999", border: "0.5px solid #ddd" };
-  };
-
   return (
     <div style={{ paddingBottom: 20 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px 16px" }}>
         <svg onClick={onBack} width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ cursor: "pointer" }}>
           <path d="M15 18l-6-6 6-6"/>
         </svg>
-        <div style={{ display: "flex", gap: 12 }}>
-          <div onClick={() => setEditing(!editing)} style={{ fontSize: 13, color: "#534AB7", cursor: "pointer", fontWeight: 500 }}>
-            {editing ? "Cancelar" : "Editar"}
-          </div>
-          <div onClick={() => { if (confirm("Remover este livro da estante?")) { onDelete(book.id); onBack(); } }}
-            style={{ fontSize: 13, color: "#c00", cursor: "pointer" }}>
-            Remover
-          </div>
+        <div onClick={() => { if (confirm("Remover este livro da estante?")) { onDelete(book.id); onBack(); } }}
+          style={{ fontSize: 13, color: "#c00", cursor: "pointer" }}>
+          Remover
         </div>
       </div>
 
@@ -807,10 +775,15 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
           )}
           <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
             {[1, 2, 3, 4, 5].map(s => (
-              <svg key={s} onClick={() => { if (editing) setRating(s === rating ? 0 : s); }} width={22} height={22}
+              <svg key={s} onClick={() => {
+                const newRating = s === rating ? 0 : s;
+                setRating(newRating);
+                updateBookInDb({ ...book, rating: newRating }, userId);
+                onUpdate({ ...book, rating: newRating });
+              }} width={22} height={22}
                 viewBox="0 0 24 24" fill={s <= rating ? "#EF9F27" : "none"}
                 stroke={s <= rating ? "#EF9F27" : "#ccc"} strokeWidth={1.5}
-                style={{ cursor: editing ? "pointer" : "default" }}>
+                style={{ cursor: "pointer" }}>
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
               </svg>
             ))}
@@ -818,21 +791,27 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
         </div>
       </div>
 
-      <div style={{ padding: "0 20px 16px" }}>
-        <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Status</div>
-        <div style={{ display: "flex", gap: 8 }}>
-          {Object.entries(STATUS_LABELS).map(([key, label]) => (
-            <div key={key} onClick={() => editing && setStatus(key)} style={{
-              flex: 1, padding: "8px 0", borderRadius: 10, textAlign: "center", fontSize: 13,
-              cursor: editing ? "pointer" : "default", fontWeight: status === key ? 500 : 400,
-              background: status === key ? "#EEEDFE" : "transparent",
-              color: status === key ? "#3C3489" : "#666",
-              border: `0.5px solid ${status === key ? "#AFA9EC" : "#ddd"}`,
-              opacity: editing ? 1 : (status === key ? 1 : 0.5),
-            }}>{label}</div>
-          ))}
+      {book.id && (
+        <div style={{ padding: "0 20px 16px" }}>
+          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Status</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {Object.entries(STATUS_LABELS).map(([key, label]) => (
+              <div key={key} onClick={() => {
+                if (key !== book.status) {
+                  updateBookInDb({ ...book, status: key }, userId);
+                  onUpdate({ ...book, status: key });
+                }
+              }} style={{
+                flex: 1, padding: "8px 0", borderRadius: 10, textAlign: "center", fontSize: 13,
+                cursor: "pointer", fontWeight: book.status === key ? 500 : 400,
+                background: book.status === key ? "#EEEDFE" : "transparent",
+                color: book.status === key ? "#3C3489" : "#666",
+                border: `0.5px solid ${book.status === key ? "#AFA9EC" : "#ddd"}`,
+              }}>{label}</div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {book.summary && (
         <div style={{ padding: "0 20px 16px" }}>
@@ -854,17 +833,7 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
       <div style={{ padding: "0 20px 16px" }}>
         <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Tropes</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {(editing ? (showAllTropes ? TROPES_LIST : [...new Set([...customTropes, ...TROPES_LIST.slice(0, 10)])]) : customTropes).map(t => (
-            <div key={t} onClick={() => editing && setCustomTropes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])} style={{
-              fontSize: 11, padding: "4px 12px", borderRadius: 12, cursor: editing ? "pointer" : "default",
-              ...getTropeStyle(t, customTropes.includes(t)),
-            }}>{t}</div>
-          ))}
-          {editing && !showAllTropes && (
-            <div onClick={() => setShowAllTropes(true)} style={{ fontSize: 11, padding: "4px 12px", borderRadius: 12, cursor: "pointer", color: "#534AB7", border: "0.5px dashed #AFA9EC" }}>
-              + ver todas
-            </div>
-          )}
+          {(book.tropes || []).map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} />)}
         </div>
       </div>
 
@@ -872,15 +841,6 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
         <div style={{ padding: "0 20px 16px" }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Sinopse</div>
           <div style={{ fontSize: 13, color: "#666", lineHeight: 1.6 }}>{book.description.replace(/<[^>]*>/g, "")}</div>
-        </div>
-      )}
-
-      {editing && (
-        <div style={{ padding: "0 20px" }}>
-          <button onClick={handleSave} style={{
-            width: "100%", padding: "14px", borderRadius: 12, border: "none",
-            background: "#534AB7", color: "white", fontSize: 15, fontWeight: 600, cursor: "pointer",
-          }}>Salvar alteracoes</button>
         </div>
       )}
     </div>
@@ -1324,8 +1284,7 @@ export default function App() {
     setScreen("home");
   };
 
-  const updateBook = async (updated) => {
-    await updateBookInDb(updated, session.user.id);
+  const updateBook = (updated) => {
     setBooks(prev => prev.map(b => b.id === updated.id ? updated : b));
     setSelectedBook(updated);
   };
@@ -1372,7 +1331,7 @@ export default function App() {
           <AddBookScreen onBack={() => { setSearchQuery(""); setScreen("home"); }} onSave={addBook} myBooks={books} initialQuery={searchQuery} />
         )}
         {screen === "detail" && selectedBook && (
-          <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")} onUpdate={updateBook} onDelete={deleteBook} />
+          <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")} onUpdate={updateBook} onDelete={deleteBook} userId={session.user.id} />
         )}
         {screen === "explore" && <ExploreScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
         {screen === "reco" && <RecoScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
