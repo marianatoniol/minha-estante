@@ -470,6 +470,57 @@ function BottomNav({ active, onNavigate }) {
   );
 }
 
+// ─── SearchInput ──────────────────────────────────────────────────────────────
+
+function SearchInput({ value, onChange, onSearch, placeholder }) {
+  const term = value.trim();
+  const showDropdown = term.length > 0;
+
+  const options = [
+    { icon: "📖", label: "como título", type: "title" },
+    { icon: "✍️", label: "como autor", type: "author" },
+    { icon: "✨", label: "como trope", type: "trope" },
+  ];
+
+  return (
+    <div style={{ position: "relative", flex: 1 }}>
+      <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth={2}
+        style={{ position: "absolute", left: 12, top: 11, zIndex: 1 }}>
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onKeyDown={e => e.key === "Enter" && term && onSearch(term, "title")}
+        placeholder={placeholder}
+        style={{ width: "100%", padding: "10px 14px 10px 36px", borderRadius: 10, background: "#f5f5f5", border: "none", fontSize: 14, outline: "none" }}
+      />
+      {showDropdown && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4,
+          background: "#fff", border: "0.5px solid #e5e5e5", borderRadius: 10,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.08)", zIndex: 20,
+        }}>
+          {options.map((opt, i) => (
+            <div
+              key={opt.type}
+              onMouseDown={() => onSearch(term, opt.type)}
+              style={{
+                padding: "12px 16px", fontSize: 14, cursor: "pointer",
+                borderBottom: i < options.length - 1 ? "0.5px solid #f0f0f0" : "none",
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = "#f9f9f9"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+            >
+              {opt.icon} <strong>"{term}"</strong> — {opt.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Home Screen ──────────────────────────────────────────────────────────────
 
 function HomeScreen({ books, loading, onSelectBook, onSearch, statusFilter, setStatusFilter }) {
