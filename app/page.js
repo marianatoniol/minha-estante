@@ -407,7 +407,7 @@ const TAG_COLOR_STYLES = {
 function TagPill({ label, color = "purple" }) {
   const c = TAG_COLOR_STYLES[color] || TAG_COLOR_STYLES.purple;
   return (
-    <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 12, background: c.bg, color: c.text, whiteSpace: "nowrap" }}>
+    <span style={{ fontSize: 11, padding: "8px 10px", borderRadius: 12, background: c.bg, color: c.text, whiteSpace: "nowrap", display: "inline-block", minHeight: 30, boxSizing: "border-box" }}>
       {label}
     </span>
   );
