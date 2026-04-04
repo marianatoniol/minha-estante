@@ -167,10 +167,19 @@ async function saveCanonicalBook(googleId, bookData, classification) {
     if (error.code === "23505") {
       const { data: existing } = await supabaseAuth
         .from("books")
-        .select("id")
+        .select("id, google_ids")
         .eq("canonical_key", classification.canonical_key)
         .maybeSingle();
       bookId = existing?.id;
+      if (bookId && googleId) {
+        const currentIds = existing?.google_ids || [];
+        if (!currentIds.includes(googleId)) {
+          supabaseAuth.from("books")
+            .update({ google_ids: [...currentIds, googleId] })
+            .eq("id", bookId)
+            .then(({ error: e }) => { if (e) console.error("google_ids append error:", e); });
+        }
+      }
     } else {
       return;
     }

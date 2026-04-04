@@ -24,6 +24,7 @@ export async function POST(request) {
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 1000,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
       messages: [
         {
           role: "user",
@@ -32,6 +33,8 @@ export async function POST(request) {
 Titulo: ${title}
 Autor(es): ${authors}
 Sinopse: ${description}
+
+Importante: se este livro for uma traducao, identifica o titulo original e o sobrenome do autor no idioma original. A canonical_key deve ser gerada SEMPRE com base no titulo original (ex: para "De sangue e cinzas" usa armentrout_from-blood-and-ash, para "A Corte de Rosas e Espinhos" usa maas_a-court-of-thorns-and-roses).
 
 Responda APENAS com JSON valido, sem markdown, sem crases, neste formato exato:
 {"canonical_key":"sobrenome-autor_titulo-curto","genres":["genero1","genero2"],"tropes":["trope1","trope2","trope3"],"summary":"resumo de 1 frase do livro em portugues"}
@@ -44,7 +47,8 @@ Para canonical_key: use formato sobrenome-autor_titulo-curto em lowercase sem ac
       ],
     });
 
-    const text = message.content[0].text;
+    const textBlock = message.content.find(b => b.type === "text");
+    const text = textBlock?.text || "";
     const clean = text.replace(/```json|```/g, "").trim();
     const result = JSON.parse(clean);
 
