@@ -65,6 +65,27 @@ async function updateBookInDb(book, userId) {
   if (error) console.error("updateBook error:", error);
 }
 
+async function updateRatingAvgInDb(googleId) {
+  const { data: catalogRow } = await supabaseAuth
+    .from("books_catalog")
+    .select("book_id")
+    .eq("google_id", googleId)
+    .maybeSingle();
+  const bookId = catalogRow?.book_id;
+  if (!bookId) return;
+  const { data: ratings } = await supabaseAuth
+    .from("bookcase")
+    .select("rating")
+    .eq("book_id", bookId)
+    .gt("rating", 0);
+  if (!ratings || ratings.length === 0) return;
+  const avg = ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length;
+  await supabaseAuth
+    .from("books")
+    .update({ rating_avg: avg, rating_count: ratings.length })
+    .eq("id", bookId);
+}
+
 async function deleteBookFromDb(id, userId) {
   const { error } = await supabaseAuth.from("bookcase").delete().eq("id", id).eq("user_id", userId);
   if (error) console.error("deleteBook error:", error);
@@ -515,7 +536,7 @@ function HomeScreen({ books, loading, onSelectBook, onSearch, statusFilter, setS
 
 // ─── Add Book Screen ──────────────────────────────────────────────────────────
 
-function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
+function AddBookScreen({ onBack, onSave, myBooks, initialQuery, onOpenExisting }) {
   const [query, setQuery] = useState(typeof initialQuery === "string" ? initialQuery : "");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -544,6 +565,12 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
   }, []);
 
   const openBook = async (book) => {
+    if (myBookIds.has(book.googleId)) {
+      const existing = myBooks.find(b => b.googleId === book.googleId);
+      onOpenExisting(existing);
+      return;
+    }
+
     setSelected(book);
     setClassification(null);
 
@@ -568,8 +595,6 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
     await onSave({ googleId: selected.googleId, status, rating: 0 });
     setSaving(false);
   };
-
-  const alreadyInShelf = selected && myBookIds.has(selected.googleId);
 
   return (
     <div style={{ paddingBottom: 20 }}>
@@ -691,35 +716,27 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
             </div>
           )}
 
-          {alreadyInShelf ? (
-            <div style={{ padding: 14, borderRadius: 12, background: "#EEEDFE", fontSize: 14, color: "#3C3489", textAlign: "center", fontWeight: 500 }}>
-              ✓ Este livro já está na sua estante
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Status de leitura</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {Object.entries(STATUS_LABELS).map(([key, label]) => (
+                <div key={key} onClick={() => setStatus(key)} style={{
+                  flex: 1, padding: "10px 0", borderRadius: 10, textAlign: "center",
+                  fontSize: 13, cursor: "pointer", fontWeight: status === key ? 500 : 400,
+                  background: status === key ? "#EEEDFE" : "transparent",
+                  color: status === key ? "#3C3489" : "#666",
+                  border: `0.5px solid ${status === key ? "#AFA9EC" : "#ddd"}`,
+                }}>{label}</div>
+              ))}
             </div>
-          ) : (
-            <>
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Status de leitura</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {Object.entries(STATUS_LABELS).map(([key, label]) => (
-                    <div key={key} onClick={() => setStatus(key)} style={{
-                      flex: 1, padding: "10px 0", borderRadius: 10, textAlign: "center",
-                      fontSize: 13, cursor: "pointer", fontWeight: status === key ? 500 : 400,
-                      background: status === key ? "#EEEDFE" : "transparent",
-                      color: status === key ? "#3C3489" : "#666",
-                      border: `0.5px solid ${status === key ? "#AFA9EC" : "#ddd"}`,
-                    }}>{label}</div>
-                  ))}
-                </div>
-              </div>
-              <button onClick={doSave} disabled={saving || !classification} style={{
-                width: "100%", padding: "14px", borderRadius: 12, border: "none",
-                background: saving || !classification ? "#AFA9EC" : "#534AB7",
-                color: "white", fontSize: 15, fontWeight: 600, cursor: "pointer",
-              }}>
-                {saving ? "Salvando..." : !classification ? "Aguardando classificação..." : "Salvar na estante"}
-              </button>
-            </>
-          )}
+          </div>
+          <button onClick={doSave} disabled={saving || !classification} style={{
+            width: "100%", padding: "14px", borderRadius: 12, border: "none",
+            background: saving || !classification ? "#AFA9EC" : "#534AB7",
+            color: "white", fontSize: 15, fontWeight: 600, cursor: "pointer",
+          }}>
+            {saving ? "Salvando..." : !classification ? "Aguardando classificação..." : "Salvar na estante"}
+          </button>
         </div>
       )}
     </div>
@@ -730,6 +747,27 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
 
 function BookDetailScreen({ book, onBack, onUpdate, onDelete, userId }) {
   const [rating, setRating] = useState(book.rating || 0);
+  const [globalRating, setGlobalRating] = useState(null);
+
+  useEffect(() => {
+    if (!book.googleId) return;
+    (async () => {
+      const { data: catalogRow } = await supabaseAuth
+        .from("books_catalog")
+        .select("book_id")
+        .eq("google_id", book.googleId)
+        .maybeSingle();
+      if (!catalogRow?.book_id) return;
+      const { data: bk } = await supabaseAuth
+        .from("books")
+        .select("rating_avg, rating_count")
+        .eq("id", catalogRow.book_id)
+        .maybeSingle();
+      if (bk && bk.rating_count > 0) {
+        setGlobalRating({ avg: bk.rating_avg, count: bk.rating_count });
+      }
+    })();
+  }, [book.googleId]);
 
   useEffect(() => {
     if (book.genres && book.genres.length > 0) return;
@@ -780,6 +818,7 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete, userId }) {
                 setRating(newRating);
                 updateBookInDb({ ...book, rating: newRating }, userId);
                 onUpdate({ ...book, rating: newRating });
+                if (book.googleId) updateRatingAvgInDb(book.googleId).catch(() => {});
               }} width={22} height={22}
                 viewBox="0 0 24 24" fill={s <= rating ? "#EF9F27" : "none"}
                 stroke={s <= rating ? "#EF9F27" : "#ccc"} strokeWidth={1.5}
@@ -788,6 +827,22 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete, userId }) {
               </svg>
             ))}
           </div>
+          {globalRating && (
+            <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 6 }}>
+              <span style={{ fontSize: 12, color: "#666", fontWeight: 500 }}>{globalRating.avg.toFixed(1)}</span>
+              <div style={{ display: "flex", gap: 1 }}>
+                {[1, 2, 3, 4, 5].map(s => (
+                  <svg key={s} width={12} height={12} viewBox="0 0 24 24"
+                    fill={s <= Math.round(globalRating.avg) ? "#EF9F27" : "none"}
+                    stroke={s <= Math.round(globalRating.avg) ? "#EF9F27" : "#ccc"}
+                    strokeWidth={1.5}>
+                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                  </svg>
+                ))}
+              </div>
+              <span style={{ fontSize: 11, color: "#999" }}>· {globalRating.count} {globalRating.count === 1 ? "avaliação" : "avaliações"}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1328,7 +1383,7 @@ export default function App() {
           />
         )}
         {screen === "add" && (
-          <AddBookScreen onBack={() => { setSearchQuery(""); setScreen("home"); }} onSave={addBook} myBooks={books} initialQuery={searchQuery} />
+          <AddBookScreen onBack={() => { setSearchQuery(""); setScreen("home"); }} onSave={addBook} myBooks={books} initialQuery={searchQuery} onOpenExisting={(b) => { setSelectedBook(b); setScreen("detail"); }} />
         )}
         {screen === "detail" && selectedBook && (
           <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")} onUpdate={updateBook} onDelete={deleteBook} userId={session.user.id} />
