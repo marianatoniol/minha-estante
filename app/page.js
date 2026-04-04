@@ -551,7 +551,7 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
     setSaving(true);
     const cl = classification || { genres: [], tropes: [], summary: "" };
     await onSave({
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       googleId: selected.googleId,
       title: selected.title,
       authors: selected.authors,
@@ -1125,7 +1125,7 @@ function ConfigScreen({ books, onImportBook }) {
         } else {
           const v = item.volumeInfo;
           const book = {
-            id: Date.now().toString() + i,
+            id: crypto.randomUUID(),
             googleId: item.id,
             title: v.title || title,
             authors: v.authors || (author ? [author] : []),
