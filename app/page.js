@@ -404,10 +404,10 @@ const TAG_COLOR_STYLES = {
   red: { bg: "#FCEBEB", text: "#791F1F" },
 };
 
-function TagPill({ label, color = "purple" }) {
+function TagPill({ label, color = "purple", onClick }) {
   const c = TAG_COLOR_STYLES[color] || TAG_COLOR_STYLES.purple;
   return (
-    <span style={{ fontSize: 11, padding: "8px 10px", borderRadius: 12, background: c.bg, color: c.text, whiteSpace: "nowrap", display: "inline-block", minHeight: 30, boxSizing: "border-box" }}>
+    <span onClick={onClick} style={{ fontSize: 11, padding: "8px 10px", borderRadius: 12, background: c.bg, color: c.text, whiteSpace: "nowrap", display: "inline-block", minHeight: 30, boxSizing: "border-box", cursor: onClick ? "pointer" : "default" }}>
       {label}
     </span>
   );
@@ -815,7 +815,7 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery, initialSearchTyp
 
 // ─── Book Detail Screen ───────────────────────────────────────────────────────
 
-function BookDetailScreen({ book, onBack, onUpdate, onDelete, userId }) {
+function BookDetailScreen({ book, onBack, onUpdate, onDelete, userId, onTropeClick }) {
   const [rating, setRating] = useState(book.rating || 0);
   const [globalRating, setGlobalRating] = useState(null);
 
@@ -958,7 +958,7 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete, userId }) {
       <div style={{ padding: "0 20px 16px" }}>
         <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Tropes</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {(book.tropes || []).map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} />)}
+          {(book.tropes || []).map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} onClick={onTropeClick ? () => onTropeClick(t) : undefined} />)}
         </div>
       </div>
 
@@ -974,9 +974,13 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete, userId }) {
 
 // ─── Explore Screen ───────────────────────────────────────────────────────────
 
-function ExploreScreen({ books, onSelectBook }) {
-  const [selectedTropes, setSelectedTropes] = useState([]);
+function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick }) {
+  const [selectedTropes, setSelectedTropes] = useState(activeTrope ? [activeTrope] : []);
   const [selectedGenre, setSelectedGenre] = useState("");
+
+  useEffect(() => {
+    if (activeTrope) setSelectedTropes([activeTrope]);
+  }, [activeTrope]);
 
   const allTropes = [...new Set(books.flatMap(b => b.tropes || []))].sort();
   const allGenres = [...new Set(books.flatMap(b => b.genres || []))].sort();
@@ -1046,7 +1050,7 @@ function ExploreScreen({ books, onSelectBook }) {
                   <div style={{ fontSize: 14, fontWeight: 500 }}>{book.title}</div>
                   <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{book.authors?.join(", ")}</div>
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
-                    {(book.tropes || []).slice(0, 3).map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} />)}
+                    {(book.tropes || []).slice(0, 3).map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} onClick={onTropeClick ? (e) => { e.stopPropagation(); onTropeClick(t); } : undefined} />)}
                   </div>
                 </div>
               </div>
@@ -1386,6 +1390,7 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchType, setSearchType] = useState("title");
+  const [activeTrope, setActiveTrope] = useState(null);
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -1426,6 +1431,8 @@ export default function App() {
     setBooks(fresh);
   };
 
+  const handleTropeClick = (trope) => { setActiveTrope(trope); setScreen("explore"); setSelectedBook(null); };
+
   const activeTab = ["add", "detail"].includes(screen) ? "home" : screen;
 
   if (session === undefined) {
@@ -1457,9 +1464,9 @@ export default function App() {
           <AddBookScreen onBack={() => { setSearchQuery(""); setSearchType("title"); setScreen("home"); }} onSave={addBook} myBooks={books} initialQuery={searchQuery} initialSearchType={searchType} onOpenExisting={(b) => { setSelectedBook(b); setScreen("detail"); }} />
         )}
         {screen === "detail" && selectedBook && (
-          <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")} onUpdate={updateBook} onDelete={deleteBook} userId={session.user.id} />
+          <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")} onUpdate={updateBook} onDelete={deleteBook} userId={session.user.id} onTropeClick={handleTropeClick} />
         )}
-        {screen === "explore" && <ExploreScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
+        {screen === "explore" && <ExploreScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} activeTrope={activeTrope} onTropeClick={handleTropeClick} />}
         {screen === "reco" && <RecoScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
         {screen === "config" && <ConfigScreen books={books} onImportBook={importBook} session={session} supabaseClient={supabaseAuth} />}
       </div>
