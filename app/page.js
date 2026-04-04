@@ -78,24 +78,24 @@ function fromDb(row) {
   };
 }
 
-async function fetchBooks() {
-  const { data, error } = await supabase.from("books").select("*").order("added_at", { ascending: false });
+async function fetchBooks(userId) {
+  const { data, error } = await supabase.from("bookcase").select("*").eq("user_id", userId).order("added_at", { ascending: false });
   if (error) { console.error("fetchBooks error:", error); return []; }
   return data.map(fromDb);
 }
 
-async function insertBook(book) {
-  const { error } = await supabase.from("books").insert(toDb(book));
+async function insertBook(book, userId) {
+  const { error } = await supabase.from("bookcase").insert({ ...toDb(book), user_id: userId });
   if (error) console.error("insertBook error:", error);
 }
 
-async function updateBookInDb(book) {
-  const { error } = await supabase.from("books").update(toDb(book)).eq("id", book.id);
+async function updateBookInDb(book, userId) {
+  const { error } = await supabase.from("bookcase").update(toDb(book)).eq("id", book.id).eq("user_id", userId);
   if (error) console.error("updateBook error:", error);
 }
 
-async function deleteBookFromDb(id) {
-  const { error } = await supabase.from("books").delete().eq("id", id);
+async function deleteBookFromDb(id, userId) {
+  const { error } = await supabase.from("bookcase").delete().eq("id", id).eq("user_id", userId);
   if (error) console.error("deleteBook error:", error);
 }
 
@@ -1313,7 +1313,7 @@ export default function App() {
 
   useEffect(() => {
     if (!session) return;
-    fetchBooks().then(data => { setBooks(data); setLoadingBooks(false); });
+    fetchBooks(session.user.id).then(data => { setBooks(data); setLoadingBooks(false); });
   }, [session]);
 
   useEffect(() => { scrollRef.current?.scrollTo(0, 0); }, [screen, selectedBook]);
@@ -1321,24 +1321,24 @@ export default function App() {
   const navigate = (s) => { setScreen(s); setSelectedBook(null); };
 
   const addBook = async (book) => {
-    await insertBook(book);
+    await insertBook(book, session.user.id);
     setBooks(prev => [book, ...prev]);
     setScreen("home");
   };
 
   const updateBook = async (updated) => {
-    await updateBookInDb(updated);
+    await updateBookInDb(updated, session.user.id);
     setBooks(prev => prev.map(b => b.id === updated.id ? updated : b));
     setSelectedBook(updated);
   };
 
   const deleteBook = async (id) => {
-    await deleteBookFromDb(id);
+    await deleteBookFromDb(id, session.user.id);
     setBooks(prev => prev.filter(b => b.id !== id));
   };
 
   const importBook = async (book) => {
-    await insertBook(book);
+    await insertBook(book, session.user.id);
     setBooks(prev => [book, ...prev]);
   };
 
