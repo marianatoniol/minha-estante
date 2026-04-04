@@ -180,10 +180,11 @@ async function saveCanonicalBook(googleId, bookData, classification) {
 
 // ─── Google Books ─────────────────────────────────────────────────────────────
 
-async function searchGoogleBooks(query) {
+async function searchGoogleBooks(query, searchType = "title") {
   try {
     const key = process.env.NEXT_PUBLIC_GOOGLE_BOOKS_API_KEY;
-    const base = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent("intitle:" + query)}&key=${key}`;
+    const prefixedQuery = searchType === "title" ? "intitle:" + query : searchType === "author" ? "inauthor:" + query : query;
+    const base = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(prefixedQuery)}&key=${key}`;
 
     const [resPt, resAll] = await Promise.all([
       fetch(`${base}&langRestrict=pt&maxResults=20`),
@@ -333,6 +334,25 @@ async function searchGoogleBooks(query) {
       .sort((a, b) => totalScore(b) - totalScore(a))
       .slice(0, 15);
   } catch { return []; }
+}
+
+async function searchByTrope(trope) {
+  try {
+    const { data, error } = await supabaseAuth
+      .from("books")
+      .select("google_id, title, authors, cover, genres, tropes, summary")
+      .contains("tropes", [trope]);
+    if (error) { console.error("searchByTrope error:", error); return []; }
+    return (data || []).map(r => ({
+      googleId: r.google_id,
+      title: r.title,
+      authors: r.authors,
+      cover: r.cover,
+      genres: r.genres,
+      tropes: r.tropes,
+      summary: r.summary,
+    }));
+  } catch (e) { console.error("searchByTrope error:", e); return []; }
 }
 
 // ─── Claude AI ────────────────────────────────────────────────────────────────
