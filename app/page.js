@@ -527,28 +527,16 @@ function HomeScreen({ books, loading, onSelectBook, onSearch, statusFilter, setS
   const [search, setSearch] = useState("");
   const filtered = filterBooks(books, { statusFilter, search });
 
-  const handleSearch = () => { if (search.trim()) onSearch(search.trim()); };
-
   return (
     <div style={{ paddingBottom: 8 }}>
       <div style={{ padding: "0 20px 14px" }}>
         <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: -0.5, marginBottom: 12, fontFamily: "'Abril Fatface', cursive" }}>O que você quer ler hoje?</h1>
-        <div style={{ display: "flex", gap: 8 }}>
-          <div style={{ flex: 1, position: "relative" }}>
-            <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth={2} style={{ position: "absolute", left: 12, top: 11 }}>
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-            <input value={search} onChange={e => setSearch(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handleSearch()}
-              placeholder="Buscar por titulo, autor ou trope..."
-              style={{ width: "100%", padding: "10px 14px 10px 36px", borderRadius: 10, background: "#f5f5f5", border: "none", fontSize: 14, outline: "none" }}
-            />
-          </div>
-          <button onClick={handleSearch} style={{
-            padding: "10px 18px", borderRadius: 10, background: "#534AB7", color: "white",
-            border: "none", fontSize: 14, fontWeight: 500, cursor: "pointer",
-          }}>Buscar</button>
-        </div>
+        <SearchInput
+          value={search}
+          onChange={text => setSearch(text)}
+          onSearch={(term, searchType) => onSearch(term, searchType)}
+          placeholder="Buscar por titulo, autor ou trope..."
+        />
       </div>
       <div style={{ display: "flex", gap: 8, padding: "0 20px 14px", overflowX: "auto" }}>
         {[{ key: "", label: "Todos" }, { key: "lendo", label: "Lendo" }, { key: "quero ler", label: "Quero ler" }, { key: "lido", label: "Lido" }].map(f => (
@@ -1386,6 +1374,7 @@ export default function App() {
   const [selectedBook, setSelectedBook] = useState(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchType, setSearchType] = useState("title");
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -1449,12 +1438,12 @@ export default function App() {
         {screen === "home" && (
           <HomeScreen books={books} loading={loadingBooks}
             onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }}
-            onSearch={(q) => { setSearchQuery(q); setScreen("add"); }}
+            onSearch={(term, type) => { setSearchQuery(term); setSearchType(type); setScreen("add"); }}
             statusFilter={statusFilter} setStatusFilter={setStatusFilter}
           />
         )}
         {screen === "add" && (
-          <AddBookScreen onBack={() => { setSearchQuery(""); setScreen("home"); }} onSave={addBook} myBooks={books} initialQuery={searchQuery} onOpenExisting={(b) => { setSelectedBook(b); setScreen("detail"); }} />
+          <AddBookScreen onBack={() => { setSearchQuery(""); setSearchType("title"); setScreen("home"); }} onSave={addBook} myBooks={books} initialQuery={searchQuery} initialSearchType={searchType} onOpenExisting={(b) => { setSelectedBook(b); setScreen("detail"); }} />
         )}
         {screen === "detail" && selectedBook && (
           <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")} onUpdate={updateBook} onDelete={deleteBook} userId={session.user.id} />
