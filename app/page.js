@@ -1072,7 +1072,7 @@ function RecoScreen({ books, onSelectBook }) {
 
 // ─── Config Screen ────────────────────────────────────────────────────────────
 
-function ConfigScreen({ books, onImportBook }) {
+function ConfigScreen({ books, onImportBook, session, supabaseClient }) {
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(null);
   const fileInputRef = useRef(null);
@@ -1178,6 +1178,17 @@ function ConfigScreen({ books, onImportBook }) {
       </div>
 
       <div style={{ padding: "0 20px" }}>
+
+        <div style={{ padding: 16, borderRadius: 12, background: "#f5f5f5", marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Conta</div>
+          <div style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>{session?.user?.email}</div>
+          <button onClick={() => supabaseClient.auth.signOut()} style={{
+            padding: "8px 20px", borderRadius: 8, border: "0.5px solid #ddd",
+            background: "#fff", fontSize: 13, cursor: "pointer", color: "#444",
+          }}>
+            Sair da conta
+          </button>
+        </div>
 
         <div style={{ padding: 16, borderRadius: 12, background: "#f5f5f5", marginBottom: 16 }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Sobre o app</div>
@@ -1377,7 +1388,7 @@ export default function App() {
         )}
         {screen === "explore" && <ExploreScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
         {screen === "reco" && <RecoScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
-        {screen === "config" && <ConfigScreen books={books} onImportBook={importBook} />}
+        {screen === "config" && <ConfigScreen books={books} onImportBook={importBook} session={session} supabaseClient={supabaseAuth} />}
       </div>
       <BottomNav active={activeTab} onNavigate={navigate} />
     </div>
