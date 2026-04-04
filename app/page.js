@@ -595,7 +595,7 @@ function HomeScreen({ books, loading, onSelectBook, onSearch, statusFilter, setS
 
 // ─── Add Book Screen ──────────────────────────────────────────────────────────
 
-function AddBookScreen({ onBack, onSave, myBooks, initialQuery, onOpenExisting }) {
+function AddBookScreen({ onBack, onSave, myBooks, initialQuery, initialSearchType, onOpenExisting }) {
   const [query, setQuery] = useState(typeof initialQuery === "string" ? initialQuery : "");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -604,23 +604,27 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery, onOpenExisting }
   const [sortOrder, setSortOrder] = useState("relevance");
   const [classification, setClassification] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [searchType, setSearchType] = useState(initialSearchType || "title");
+  const [searched, setSearched] = useState(false);
 
   const myBookIds = new Set(myBooks.map(b => b.googleId));
 
-  const doSearch = async (q) => {
+  const doSearch = async (q, type) => {
     const raw = q || query;
     if (!raw || typeof raw !== "string" || !raw.trim()) return;
     const term = raw.trim();
+    const kind = type || searchType;
     setLoading(true);
     setSelected(null);
     setClassification(null);
-    const r = await searchGoogleBooks(term);
+    const r = kind === "trope" ? await searchByTrope(term) : await searchGoogleBooks(term, kind);
     setResults(r);
+    setSearched(true);
     setLoading(false);
   };
 
   useEffect(() => {
-    if (initialQuery) doSearch(initialQuery);
+    if (initialQuery) doSearch(initialQuery, initialSearchType || "title");
   }, []);
 
   const openBook = async (book) => {
@@ -666,16 +670,13 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery, onOpenExisting }
 
       {!selected && (
         <>
-          <div style={{ margin: "0 20px 16px", display: "flex", gap: 8 }}>
-            <input value={query} onChange={e => setQuery(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && doSearch()}
-              placeholder="Nome do livro ou autor..."
-              style={{ flex: 1, padding: "10px 14px", borderRadius: 10, background: "#f5f5f5", border: "none", fontSize: 14, outline: "none" }}
+          <div style={{ margin: "0 20px 16px" }}>
+            <SearchInput
+              value={query}
+              onChange={text => setQuery(text)}
+              onSearch={(term, type) => { setSearchType(type); doSearch(term, type); }}
+              placeholder="Nome do livro, autor ou trope..."
             />
-            <button onClick={() => doSearch()} disabled={loading} style={{
-              padding: "10px 18px", borderRadius: 10, background: "#534AB7", color: "white",
-              border: "none", fontSize: 14, fontWeight: 500, cursor: "pointer", opacity: loading ? 0.6 : 1,
-            }}>{loading ? "..." : "Buscar"}</button>
           </div>
 
           {results.length > 0 && (
@@ -723,7 +724,11 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery, onOpenExisting }
 
           {results.length === 0 && !loading && (
             <div style={{ textAlign: "center", padding: "40px 20px", color: "#999" }}>
-              <div style={{ fontSize: 14 }}>Busque pelo nome do livro ou autor</div>
+              <div style={{ fontSize: 14 }}>
+                {searched && searchType === "trope"
+                  ? "Nenhum livro encontrado com esse trope ainda. O catálogo cresce conforme os livros são explorados no app."
+                  : "Busque pelo nome do livro ou autor"}
+              </div>
             </div>
           )}
         </>
