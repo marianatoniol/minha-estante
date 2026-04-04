@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "../lib/supabase";
-import { getGradient, getSimilarity, filterBooks } from "../lib/utils";
+import { getGradient, filterBooks, filterByExplore, buildRecommendations, normalizeBookRow } from "../lib/utils";
 
 const supabaseAuth = createClient();
 
@@ -29,21 +29,7 @@ async function fetchBooks(userId) {
     .eq("user_id", userId)
     .order("added_at", { ascending: false });
   if (error) { console.error("fetchBooks error:", error); return []; }
-  return data.map(row => ({
-    id: row.id,
-    googleId: row.books?.google_id || null,
-    title: row.books?.title || "",
-    authors: row.books?.authors || [],
-    cover: row.books?.cover || null,
-    description: row.books?.description || "",
-    pageCount: row.books?.page_count || 0,
-    genres: row.books?.genres || [],
-    tropes: row.books?.tropes || [],
-    summary: row.books?.summary || "",
-    status: row.status,
-    rating: row.rating || 0,
-    addedAt: row.added_at,
-  }));
+  return data.map(normalizeBookRow);
 }
 
 async function insertBook({ googleId, status, rating }, userId) {
@@ -910,11 +896,7 @@ function ExploreScreen({ books, onSelectBook }) {
   const allTropes = [...new Set(books.flatMap(b => b.tropes || []))].sort();
   const allGenres = [...new Set(books.flatMap(b => b.genres || []))].sort();
 
-  const filtered = books.filter(b => {
-    if (selectedGenre && !(b.genres || []).includes(selectedGenre)) return false;
-    if (selectedTropes.length > 0 && !selectedTropes.every(t => (b.tropes || []).includes(t))) return false;
-    return true;
-  });
+  const filtered = filterByExplore(books, { selectedGenre, selectedTropes });
 
   return (
     <div style={{ paddingBottom: 8 }}>
@@ -1015,19 +997,7 @@ function RecoScreen({ books, onSelectBook }) {
   books.forEach(b => (b.tropes || []).forEach(t => { tropeCounts[t] = (tropeCounts[t] || 0) + 1; }));
   const topTropes = Object.entries(tropeCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
-  const recommendations = [];
-  books.forEach(bookA => {
-    books.forEach(bookB => {
-      if (bookA.id === bookB.id) return;
-      const sim = getSimilarity(bookA, bookB);
-      if (sim > 30) {
-        const existing = recommendations.find(r => r.book.id === bookB.id);
-        if (!existing) recommendations.push({ book: bookB, similarity: sim, basedOn: bookA });
-        else if (existing.similarity < sim) { existing.similarity = sim; existing.basedOn = bookA; }
-      }
-    });
-  });
-  recommendations.sort((a, b) => b.similarity - a.similarity);
+  const recommendations = buildRecommendations(books);
 
   return (
     <div style={{ paddingBottom: 8 }}>

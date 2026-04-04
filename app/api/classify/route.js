@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { parseAIJson } from "../../../lib/utils";
 
 const TROPES_LIST = [
   "enemies to lovers","slow burn","forced proximity","found family","friends to lovers",
@@ -49,8 +50,7 @@ Para canonical_key: use formato sobrenome-autor_titulo-curto em lowercase sem ac
 
     const textBlock = message.content.find(b => b.type === "text");
     const text = textBlock?.text || "";
-    const clean = text.replace(/```json|```/g, "").trim();
-    const result = JSON.parse(clean);
+    const result = parseAIJson(text);
 
     return Response.json(result);
   } catch (e) {

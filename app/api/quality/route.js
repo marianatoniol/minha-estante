@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { parseAIJson } from "../../../lib/utils";
 
 export async function POST(request) {
   try {
@@ -18,8 +19,7 @@ export async function POST(request) {
     });
 
     const text = message.content[0].text;
-    const clean = text.replace(/```json|```/g, "").trim();
-    return Response.json(JSON.parse(clean));
+    return Response.json(parseAIJson(text));
   } catch (e) {
     console.error("quality error:", e);
     return Response.json({ is_spam: false, quality_score: 5, reason: "error" }, { status: 500 });
