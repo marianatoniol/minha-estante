@@ -34,11 +34,12 @@ Autor(es): ${authors}
 Sinopse: ${description}
 
 Responda APENAS com JSON valido, sem markdown, sem crases, neste formato exato:
-{"genres":["genero1","genero2"],"tropes":["trope1","trope2","trope3"],"summary":"resumo de 1 frase do livro em portugues"}
+{"canonical_key":"sobrenome-autor_titulo-curto","genres":["genero1","genero2"],"tropes":["trope1","trope2","trope3"],"summary":"resumo de 1 frase do livro em portugues"}
 
 Use apenas generos desta lista: ${GENRES.join(", ")}
 Use apenas tropes desta lista: ${TROPES_LIST.join(", ")}
-Selecione de 1 a 3 generos e de 2 a 5 tropes que melhor descrevem o livro.`,
+Selecione de 1 a 3 generos e de 2 a 5 tropes que melhor descrevem o livro.
+Para canonical_key: use formato sobrenome-autor_titulo-curto em lowercase sem acentos, apenas letras, numeros e hifens. Exemplos: sarah-j-maas_acomaf, tolkien_senhor-dos-aneis`,
         },
       ],
     });
@@ -50,6 +51,6 @@ Selecione de 1 a 3 generos e de 2 a 5 tropes que melhor descrevem o livro.`,
     return Response.json(result);
   } catch (e) {
     console.error("classify error:", e);
-    return Response.json({ genres: [], tropes: [], summary: "" }, { status: 500 });
+    return Response.json({ canonical_key: "", genres: [], tropes: [], summary: "" }, { status: 500 });
   }
 }

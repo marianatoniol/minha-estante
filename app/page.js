@@ -101,45 +101,78 @@ async function deleteBookFromDb(id, userId) {
 
 // ─── Supabase: catálogo global ────────────────────────────────────────────────
 
-async function getCatalogEntry(googleId) {
-  const { data, error } = await supabase
+async function getClassificationForBook(googleId) {
+  const { data: catalogRow } = await supabase
     .from("books_catalog")
-    .select("*")
+    .select("book_id")
     .eq("google_id", googleId)
     .maybeSingle();
-  if (error) return null;
-  if (data) {
-    supabase.from("books_catalog")
-      .update({ view_count: (data.view_count || 0) + 1 })
-      .eq("google_id", googleId)
-      .then(({ error: e }) => { if (e) console.error("view_count error:", e); });
-  }
-  return data;
+
+  if (!catalogRow?.book_id) return null;
+
+  const { data: book } = await supabase
+    .from("books")
+    .select("canonical_key, genres, tropes, summary, view_count")
+    .eq("id", catalogRow.book_id)
+    .maybeSingle();
+
+  if (!book) return null;
+
+  supabase.from("books")
+    .update({ view_count: (book.view_count || 0) + 1 })
+    .eq("id", catalogRow.book_id)
+    .then(({ error: e }) => { if (e) console.error("view_count error:", e); });
+
+  return { canonical_key: book.canonical_key, genres: book.genres || [], tropes: book.tropes || [], summary: book.summary || "" };
 }
 
-async function saveCatalogEntry(googleId, bookData, classification) {
-  const { data: existing } = await supabase
-    .from("books_catalog")
-    .select("save_count")
-    .eq("google_id", googleId)
-    .maybeSingle();
+async function saveCanonicalBook(googleId, bookData, classification) {
+  let bookId;
 
   const entry = {
+    canonical_key: classification.canonical_key || "",
     google_id: googleId,
     title: bookData.title,
-    authors: JSON.stringify(bookData.authors),
-    description: bookData.description || null,
+    authors: bookData.authors,
     cover: bookData.cover || null,
-    published_date: bookData.publishedDate || null,
-    page_count: bookData.pageCount || 0,
-    genres: JSON.stringify(classification.genres || []),
-    tropes: JSON.stringify(classification.tropes || []),
+    genres: classification.genres || [],
+    tropes: classification.tropes || [],
     summary: classification.summary || null,
-    classified_at: new Date().toISOString(),
-    save_count: existing ? (existing.save_count || 0) + 1 : 1,
   };
-  const { error } = await supabase.from("books_catalog").upsert(entry, { onConflict: "google_id" });
-  if (error) console.error("saveCatalogEntry error:", error);
+
+  console.log("[saveCanonicalBook] inserting into books:", entry);
+
+  const { data: inserted, error } = await supabase
+    .from("books")
+    .insert(entry)
+    .select("id")
+    .single();
+
+  if (error) {
+    console.error("[saveCanonicalBook] INSERT error — code:", error.code, "message:", error.message, "details:", error.details, "hint:", error.hint);
+    if (error.code === "23505") {
+      const { data: existing } = await supabase
+        .from("books")
+        .select("id")
+        .eq("canonical_key", classification.canonical_key)
+        .maybeSingle();
+      bookId = existing?.id;
+    } else {
+      return;
+    }
+  } else {
+    bookId = inserted?.id;
+    console.log("[saveCanonicalBook] INSERT ok, bookId:", bookId);
+  }
+
+  if (!bookId) { console.error("[saveCanonicalBook] bookId is null, skipping books_catalog update"); return; }
+
+  const { error: updateErr } = await supabase
+    .from("books_catalog")
+    .update({ book_id: bookId })
+    .eq("google_id", googleId);
+  if (updateErr) console.error("[saveCanonicalBook] UPDATE books_catalog error — code:", updateErr.code, "message:", updateErr.message);
+  else console.log("[saveCanonicalBook] books_catalog.book_id updated for", googleId);
 }
 
 // ─── Google Books ─────────────────────────────────────────────────────────────
@@ -530,19 +563,18 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
     setSelected(book);
     setClassification(null);
 
-    const cached = await getCatalogEntry(book.googleId);
-    const genres = cached ? JSON.parse(cached.genres || "[]") : [];
-    if (cached && genres.length > 0) {
+    const cached = await getClassificationForBook(book.googleId);
+    if (cached && cached.genres.length > 0) {
       setClassification({
-        genres,
-        tropes: JSON.parse(cached.tropes || "[]"),
-        summary: cached.summary || "",
+        genres: cached.genres,
+        tropes: cached.tropes,
+        summary: cached.summary,
       });
       return;
     }
 
     const result = await classifyWithAI(book.title, book.authors.join(", "), book.description);
-    await saveCatalogEntry(book.googleId, book, result);
+    await saveCanonicalBook(book.googleId, book, result);
     setClassification(result);
   };
 
@@ -740,14 +772,14 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete }) {
     if (!book.googleId) return;
 
     (async () => {
-      const cached = await getCatalogEntry(book.googleId);
-      const genres = cached ? JSON.parse(cached.genres || "[]") : [];
+      const cached = await getClassificationForBook(book.googleId);
+      const genres = cached ? (cached.genres || []) : [];
       if (genres.length > 0) {
-        onUpdate({ ...book, genres, tropes: JSON.parse(cached.tropes || "[]"), summary: cached.summary || "" });
+        onUpdate({ ...book, genres, tropes: cached.tropes || [], summary: cached.summary || "" });
         return;
       }
       const result = await classifyWithAI(book.title, book.authors.join(", "), book.description);
-      await saveCatalogEntry(book.googleId, book, result);
+      await saveCanonicalBook(book.googleId, book, result);
       onUpdate({ ...book, genres: result.genres || [], tropes: result.tropes || [], summary: result.summary || "" });
     })();
   }, [book.id]);
