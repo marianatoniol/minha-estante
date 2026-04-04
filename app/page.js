@@ -82,7 +82,10 @@ async function insertBook({ googleId, status, rating }, userId) {
     .select("id")
     .single();
 
-  if (error) { console.error("insertBook error:", error); return null; }
+  if (error) {
+    if (error.code === "23505") return null; // livro já está na estante
+    console.error("insertBook error:", error); return null;
+  }
 
   // Incrementa save_count em books (fire-and-forget)
   supabaseAuth.from("books").select("save_count").eq("id", bookId).single()
@@ -280,12 +283,22 @@ async function searchGoogleBooks(query) {
     const googleIds = deduped.map(b => b.googleId);
     const { data: catalogRows } = await supabaseAuth
       .from("books_catalog")
-      .select("google_id, view_count, save_count, quality_checked, is_spam, quality_score")
+      .select("google_id, book_id, view_count, save_count, quality_checked, is_spam, quality_score")
       .in("google_id", googleIds);
     const catalogMap = new Map((catalogRows || []).map(r => [r.google_id, r]));
 
+    // Dedup adicional por book_id: se dois google_ids apontam para o mesmo book, mantém só o primeiro
+    const seenBookIds = new Set();
+    const dedupedByBook = deduped.filter(b => {
+      const bookId = catalogMap.get(b.googleId)?.book_id;
+      if (!bookId) return true;
+      if (seenBookIds.has(bookId)) return false;
+      seenBookIds.add(bookId);
+      return true;
+    });
+
     // Dispara análise de qualidade em background para livros ainda não verificados
-    for (const book of deduped) {
+    for (const book of dedupedByBook) {
       const entry = catalogMap.get(book.googleId);
       if ((!entry || !entry.quality_checked) && book.googleId && book.title) {
         fetch("/api/quality", {
@@ -323,7 +336,7 @@ async function searchGoogleBooks(query) {
       return score(book) + engagement + quality - spamPenalty;
     };
 
-    return deduped
+    return dedupedByBook
       .filter(b => {
         const entry = catalogMap.get(b.googleId);
         return !(entry?.is_spam && (entry?.quality_score ?? 10) < 3);
