@@ -1,6 +1,5 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { supabase } from "./supabase";
 import { createClient } from "../lib/supabase";
 
 const supabaseAuth = createClient();
@@ -41,7 +40,7 @@ function getGradient(title) {
 // ─── Supabase: estante pessoal ────────────────────────────────────────────────
 
 async function fetchBooks(userId) {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAuth
     .from("bookcase")
     .select("id, status, rating, added_at, books(google_id, title, authors, cover, description, page_count, genres, tropes, summary)")
     .eq("user_id", userId)
@@ -65,7 +64,7 @@ async function fetchBooks(userId) {
 }
 
 async function insertBook({ googleId, status, rating }, userId) {
-  const { data: catalogRow } = await supabase
+  const { data: catalogRow } = await supabaseAuth
     .from("books_catalog")
     .select("book_id")
     .eq("google_id", googleId)
@@ -77,7 +76,7 @@ async function insertBook({ googleId, status, rating }, userId) {
     return null;
   }
 
-  const { data: inserted, error } = await supabase
+  const { data: inserted, error } = await supabaseAuth
     .from("bookcase")
     .insert({ user_id: userId, book_id: bookId, status, rating, added_at: new Date().toISOString() })
     .select("id")
@@ -86,9 +85,9 @@ async function insertBook({ googleId, status, rating }, userId) {
   if (error) { console.error("insertBook error:", error); return null; }
 
   // Incrementa save_count em books (fire-and-forget)
-  supabase.from("books").select("save_count").eq("id", bookId).single()
+  supabaseAuth.from("books").select("save_count").eq("id", bookId).single()
     .then(({ data: bk }) =>
-      supabase.from("books").update({ save_count: (bk?.save_count || 0) + 1 }).eq("id", bookId)
+      supabaseAuth.from("books").update({ save_count: (bk?.save_count || 0) + 1 }).eq("id", bookId)
         .then(({ error: e }) => { if (e) console.error("save_count error:", e); })
     );
 
@@ -96,7 +95,7 @@ async function insertBook({ googleId, status, rating }, userId) {
 }
 
 async function updateBookInDb(book, userId) {
-  const { error } = await supabase
+  const { error } = await supabaseAuth
     .from("bookcase")
     .update({ status: book.status, rating: book.rating })
     .eq("id", book.id)
@@ -105,14 +104,14 @@ async function updateBookInDb(book, userId) {
 }
 
 async function deleteBookFromDb(id, userId) {
-  const { error } = await supabase.from("bookcase").delete().eq("id", id).eq("user_id", userId);
+  const { error } = await supabaseAuth.from("bookcase").delete().eq("id", id).eq("user_id", userId);
   if (error) console.error("deleteBook error:", error);
 }
 
 // ─── Supabase: catálogo global ────────────────────────────────────────────────
 
 async function getClassificationForBook(googleId) {
-  const { data: catalogRow } = await supabase
+  const { data: catalogRow } = await supabaseAuth
     .from("books_catalog")
     .select("book_id")
     .eq("google_id", googleId)
@@ -120,7 +119,7 @@ async function getClassificationForBook(googleId) {
 
   if (!catalogRow?.book_id) return null;
 
-  const { data: book } = await supabase
+  const { data: book } = await supabaseAuth
     .from("books")
     .select("canonical_key, genres, tropes, summary, view_count")
     .eq("id", catalogRow.book_id)
@@ -128,7 +127,7 @@ async function getClassificationForBook(googleId) {
 
   if (!book) return null;
 
-  supabase.from("books")
+  supabaseAuth.from("books")
     .update({ view_count: (book.view_count || 0) + 1 })
     .eq("id", catalogRow.book_id)
     .then(({ error: e }) => { if (e) console.error("view_count error:", e); });
@@ -154,7 +153,7 @@ async function saveCanonicalBook(googleId, bookData, classification) {
 
   console.log("[saveCanonicalBook] inserting into books:", entry);
 
-  const { data: inserted, error } = await supabase
+  const { data: inserted, error } = await supabaseAuth
     .from("books")
     .insert(entry)
     .select("id")
@@ -163,7 +162,7 @@ async function saveCanonicalBook(googleId, bookData, classification) {
   if (error) {
     console.error("[saveCanonicalBook] INSERT error — code:", error.code, "message:", error.message, "details:", error.details, "hint:", error.hint);
     if (error.code === "23505") {
-      const { data: existing } = await supabase
+      const { data: existing } = await supabaseAuth
         .from("books")
         .select("id")
         .eq("canonical_key", classification.canonical_key)
@@ -179,7 +178,7 @@ async function saveCanonicalBook(googleId, bookData, classification) {
 
   if (!bookId) { console.error("[saveCanonicalBook] bookId is null, skipping books_catalog update"); return; }
 
-  const { error: updateErr } = await supabase
+  const { error: updateErr } = await supabaseAuth
     .from("books_catalog")
     .update({ book_id: bookId })
     .eq("google_id", googleId);
@@ -279,7 +278,7 @@ async function searchGoogleBooks(query) {
 
     // Busca engajamento e qualidade do catálogo para os resultados encontrados
     const googleIds = deduped.map(b => b.googleId);
-    const { data: catalogRows } = await supabase
+    const { data: catalogRows } = await supabaseAuth
       .from("books_catalog")
       .select("google_id, view_count, save_count, quality_checked, is_spam, quality_score")
       .in("google_id", googleIds);
@@ -296,7 +295,7 @@ async function searchGoogleBooks(query) {
         })
           .then(r => r.json())
           .then(({ is_spam, quality_score }) =>
-            supabase.from("books_catalog").upsert(
+            supabaseAuth.from("books_catalog").upsert(
               {
                 google_id: book.googleId,
                 title: book.title,
@@ -1271,7 +1270,7 @@ function ConfigScreen({ books, onImportBook, session, supabaseClient }) {
           <div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Remove todos os livros da sua estante. Esta acao nao pode ser desfeita.</div>
           <button onClick={async () => {
             if (confirm("Tem certeza? Todos os livros serao removidos.")) {
-              await supabase.from("books").delete().neq("id", "");
+              await supabaseAuth.from("books").delete().neq("id", "");
               window.location.reload();
             }
           }} style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: "#a32d2d", color: "white", fontSize: 13, cursor: "pointer" }}>
