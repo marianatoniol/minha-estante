@@ -40,57 +40,67 @@ function getGradient(title) {
 
 // ─── Supabase: estante pessoal ────────────────────────────────────────────────
 
-function toDb(book) {
-  return {
-    id: book.id,
-    google_id: book.googleId || null,
-    title: book.title,
-    authors: book.authors ? JSON.stringify(book.authors) : null,
-    description: book.description || null,
-    cover: book.cover || null,
-    published_date: book.publishedDate || null,
-    page_count: book.pageCount || 0,
-    status: book.status,
-    genres: book.genres ? JSON.stringify(book.genres) : null,
-    tropes: book.tropes ? JSON.stringify(book.tropes) : null,
-    summary: book.summary || null,
-    rating: book.rating || 0,
-    added_at: book.addedAt || new Date().toISOString(),
-  };
-}
-
-function fromDb(row) {
-  return {
+async function fetchBooks(userId) {
+  const { data, error } = await supabase
+    .from("bookcase")
+    .select("id, status, rating, added_at, books(google_id, title, authors, cover, description, page_count, genres, tropes, summary)")
+    .eq("user_id", userId)
+    .order("added_at", { ascending: false });
+  if (error) { console.error("fetchBooks error:", error); return []; }
+  return data.map(row => ({
     id: row.id,
-    googleId: row.google_id,
-    title: row.title,
-    authors: row.authors ? JSON.parse(row.authors) : [],
-    description: row.description || "",
-    cover: row.cover || null,
-    publishedDate: row.published_date || "",
-    pageCount: row.page_count || 0,
+    googleId: row.books?.google_id || null,
+    title: row.books?.title || "",
+    authors: row.books?.authors || [],
+    cover: row.books?.cover || null,
+    description: row.books?.description || "",
+    pageCount: row.books?.page_count || 0,
+    genres: row.books?.genres || [],
+    tropes: row.books?.tropes || [],
+    summary: row.books?.summary || "",
     status: row.status,
-    genres: row.genres ? JSON.parse(row.genres) : [],
-    tropes: row.tropes ? JSON.parse(row.tropes) : [],
-    summary: row.summary || "",
     rating: row.rating || 0,
     addedAt: row.added_at,
-  };
+  }));
 }
 
-async function fetchBooks(userId) {
-  const { data, error } = await supabase.from("bookcase").select("*").eq("user_id", userId).order("added_at", { ascending: false });
-  if (error) { console.error("fetchBooks error:", error); return []; }
-  return data.map(fromDb);
-}
+async function insertBook({ googleId, status, rating }, userId) {
+  const { data: catalogRow } = await supabase
+    .from("books_catalog")
+    .select("book_id")
+    .eq("google_id", googleId)
+    .maybeSingle();
 
-async function insertBook(book, userId) {
-  const { error } = await supabase.from("bookcase").insert({ ...toDb(book), user_id: userId });
-  if (error) console.error("insertBook error:", error);
+  const bookId = catalogRow?.book_id;
+  if (!bookId) {
+    console.error("insertBook: book_id não encontrado em books_catalog para", googleId);
+    return null;
+  }
+
+  const { data: inserted, error } = await supabase
+    .from("bookcase")
+    .insert({ user_id: userId, book_id: bookId, status, rating, added_at: new Date().toISOString() })
+    .select("id")
+    .single();
+
+  if (error) { console.error("insertBook error:", error); return null; }
+
+  // Incrementa save_count em books (fire-and-forget)
+  supabase.from("books").select("save_count").eq("id", bookId).single()
+    .then(({ data: bk }) =>
+      supabase.from("books").update({ save_count: (bk?.save_count || 0) + 1 }).eq("id", bookId)
+        .then(({ error: e }) => { if (e) console.error("save_count error:", e); })
+    );
+
+  return inserted?.id;
 }
 
 async function updateBookInDb(book, userId) {
-  const { error } = await supabase.from("bookcase").update(toDb(book)).eq("id", book.id).eq("user_id", userId);
+  const { error } = await supabase
+    .from("bookcase")
+    .update({ status: book.status, rating: book.rating })
+    .eq("id", book.id)
+    .eq("user_id", userId);
   if (error) console.error("updateBook error:", error);
 }
 
@@ -135,6 +145,8 @@ async function saveCanonicalBook(googleId, bookData, classification) {
     title: bookData.title,
     authors: bookData.authors,
     cover: bookData.cover || null,
+    description: bookData.description || null,
+    page_count: bookData.pageCount || 0,
     genres: classification.genres || [],
     tropes: classification.tropes || [],
     summary: classification.summary || null,
@@ -581,23 +593,7 @@ function AddBookScreen({ onBack, onSave, myBooks, initialQuery }) {
   const doSave = async () => {
     if (!selected) return;
     setSaving(true);
-    const cl = classification || { genres: [], tropes: [], summary: "" };
-    await onSave({
-      id: crypto.randomUUID(),
-      googleId: selected.googleId,
-      title: selected.title,
-      authors: selected.authors,
-      description: selected.description,
-      cover: selected.cover,
-      publishedDate: selected.publishedDate,
-      pageCount: selected.pageCount,
-      status,
-      genres: cl.genres || [],
-      tropes: cl.tropes || [],
-      summary: cl.summary || "",
-      rating: 0,
-      addedAt: new Date().toISOString(),
-    });
+    await onSave({ googleId: selected.googleId, status, rating: 0 });
     setSaving(false);
   };
 
@@ -1363,9 +1359,10 @@ export default function App() {
 
   const navigate = (s) => { setScreen(s); setSelectedBook(null); };
 
-  const addBook = async (book) => {
-    await insertBook(book, session.user.id);
-    setBooks(prev => [book, ...prev]);
+  const addBook = async ({ googleId, status, rating }) => {
+    await insertBook({ googleId, status, rating }, session.user.id);
+    const fresh = await fetchBooks(session.user.id);
+    setBooks(fresh);
     setScreen("home");
   };
 
@@ -1381,8 +1378,9 @@ export default function App() {
   };
 
   const importBook = async (book) => {
-    await insertBook(book, session.user.id);
-    setBooks(prev => [book, ...prev]);
+    await insertBook({ googleId: book.googleId, status: book.status, rating: book.rating }, session.user.id);
+    const fresh = await fetchBooks(session.user.id);
+    setBooks(fresh);
   };
 
   const activeTab = ["add", "detail"].includes(screen) ? "home" : screen;
