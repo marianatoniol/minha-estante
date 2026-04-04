@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "../lib/supabase";
-import { getGradient, filterBooks, filterByExplore, buildRecommendations, normalizeBookRow } from "../lib/utils";
+import { getGradient, filterBooks, buildRecommendations, normalizeBookRow } from "../lib/utils";
 
 const supabaseAuth = createClient();
 
@@ -975,8 +975,17 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete, userId, onTropeCli
 // ─── Explore Screen ───────────────────────────────────────────────────────────
 
 function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeGenre }) {
+  const [query, setQuery] = useState("");
+  const [searchTerm, setSearchTerm] = useState(null);
   const [selectedTropes, setSelectedTropes] = useState(activeTrope ? [activeTrope] : []);
   const [selectedGenre, setSelectedGenre] = useState(activeGenre || "");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [allGenres, setAllGenres] = useState([]);
+  const [allTropes, setAllTropes] = useState([]);
+
+  const myBookIds = new Set(books.map(b => b.googleId).filter(Boolean));
 
   useEffect(() => {
     if (activeTrope) setSelectedTropes([activeTrope]);
@@ -986,79 +995,216 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
     if (activeGenre !== undefined) setSelectedGenre(activeGenre || "");
   }, [activeGenre]);
 
-  const allTropes = [...new Set(books.flatMap(b => b.tropes || []))].sort();
-  const allGenres = [...new Set(books.flatMap(b => b.genres || []))].sort();
+  // Busca todos os gêneros e tropes do catálogo global para o drawer
+  useEffect(() => {
+    supabaseAuth.from("books").select("genres, tropes").then(({ data }) => {
+      if (!data) return;
+      setAllGenres([...new Set(data.flatMap(b => b.genres || []))].sort());
+      setAllTropes([...new Set(data.flatMap(b => b.tropes || []))].sort());
+    });
+  }, []);
 
-  const filtered = filterByExplore(books, { selectedGenre, selectedTropes });
+  // Busca resultados no catálogo global quando filtros ou busca mudam
+  const hasFilters = selectedTropes.length > 0 || !!selectedGenre || searchTerm !== null;
+
+  useEffect(() => {
+    if (!hasFilters) { setResults([]); return; }
+    setLoading(true);
+    let q = supabaseAuth
+      .from("books")
+      .select("id, google_id, title, authors, cover, genres, tropes, save_count, summary")
+      .order("save_count", { ascending: false })
+      .limit(100);
+    if (selectedGenre) q = q.contains("genres", [selectedGenre]);
+    if (selectedTropes.length > 0) q = q.contains("tropes", selectedTropes);
+    q.then(({ data }) => {
+      let filtered = data || [];
+      if (searchTerm) {
+        const term = searchTerm.toLowerCase();
+        filtered = filtered.filter(b =>
+          b.title?.toLowerCase().includes(term) ||
+          (b.genres || []).some(g => g.toLowerCase().includes(term)) ||
+          (b.tropes || []).some(t => t.toLowerCase().includes(term))
+        );
+      }
+      setResults(filtered);
+      setLoading(false);
+    });
+  }, [searchTerm, selectedGenre, selectedTropes, hasFilters]);
+
+  const activeFilterCount = selectedTropes.length + (selectedGenre ? 1 : 0);
+
+  const handleSelectResult = (catalogBook) => {
+    const shelfBook = books.find(b => b.googleId === catalogBook.google_id);
+    if (shelfBook) { onSelectBook(shelfBook); return; }
+    onSelectBook({
+      id: null, googleId: catalogBook.google_id, title: catalogBook.title,
+      authors: catalogBook.authors || [], cover: catalogBook.cover || null,
+      genres: catalogBook.genres || [], tropes: catalogBook.tropes || [],
+      summary: catalogBook.summary || "", status: null, rating: 0, description: "", pageCount: 0,
+    });
+  };
+
+  const toggleTrope = (t) => setSelectedTropes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
+  const clearAll = () => { setSelectedTropes([]); setSelectedGenre(""); setSearchTerm(null); setQuery(""); };
 
   return (
     <div style={{ paddingBottom: 8 }}>
-      <div style={{ padding: "0 20px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ padding: "0 20px 12px", display: "flex", alignItems: "center", gap: 10 }}>
         <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
           <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
         </svg>
         <h1 style={{ fontSize: 22, fontWeight: 600 }}>Explorar</h1>
       </div>
 
-      {books.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "40px 20px", color: "#999" }}>
-          <div style={{ fontSize: 15, marginBottom: 4 }}>Nada pra explorar ainda</div>
-          <div style={{ fontSize: 13 }}>Adicione livros pra poder filtrar por tropes</div>
+      {/* Campo de busca + botão Filtros */}
+      <div style={{ padding: "0 20px 10px", display: "flex", gap: 8, alignItems: "center" }}>
+        <SearchInput
+          value={query}
+          onChange={setQuery}
+          onSearch={(term) => { setSearchTerm(term); }}
+          placeholder="Buscar por trope ou gênero..."
+        />
+        <div onClick={() => setDrawerOpen(true)} style={{
+          display: "flex", alignItems: "center", gap: 6, padding: "9px 14px",
+          borderRadius: 10, border: "0.5px solid #ddd", cursor: "pointer",
+          background: activeFilterCount > 0 ? "#EEEDFE" : "#fff",
+          color: activeFilterCount > 0 ? "#3C3489" : "#444",
+          fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0,
+        }}>
+          <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/>
+          </svg>
+          Filtros{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
         </div>
-      ) : (
-        <>
-          {allGenres.length > 0 && (
-            <div style={{ padding: "0 20px 12px" }}>
-              <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Generos</div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {allGenres.map(g => (
-                  <div key={g} onClick={() => setSelectedGenre(selectedGenre === g ? "" : g)} style={{
-                    padding: "6px 14px", borderRadius: 20, fontSize: 13, cursor: "pointer",
-                    background: selectedGenre === g ? "#EEEDFE" : "transparent",
-                    color: selectedGenre === g ? "#3C3489" : "#666",
-                    border: `0.5px solid ${selectedGenre === g ? "#AFA9EC" : "#ddd"}`,
-                    fontWeight: selectedGenre === g ? 500 : 400,
-                  }}>{g}</div>
-                ))}
-              </div>
-            </div>
+      </div>
+
+      {/* Chips de filtros ativos */}
+      {(activeFilterCount > 0 || searchTerm) && (
+        <div style={{ padding: "0 20px 10px", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {searchTerm && (
+            <div onClick={() => { setSearchTerm(null); setQuery(""); }} style={{
+              padding: "4px 10px", borderRadius: 20, fontSize: 12, cursor: "pointer",
+              background: "#f5f5f5", color: "#444", border: "0.5px solid #ddd",
+            }}>"{searchTerm}" ×</div>
           )}
-          {allTropes.length > 0 && (
-            <div style={{ padding: "0 20px 16px" }}>
-              <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Tropes</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {allTropes.map(t => (
-                  <div key={t} onClick={() => setSelectedTropes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])} style={{
-                    padding: "5px 12px", borderRadius: 16, fontSize: 12, cursor: "pointer",
-                    background: selectedTropes.includes(t) ? "#EEEDFE" : "#f5f5f5",
-                    color: selectedTropes.includes(t) ? "#3C3489" : "#666",
-                    border: selectedTropes.includes(t) ? "0.5px solid #AFA9EC" : "0.5px solid transparent",
-                    fontWeight: selectedTropes.includes(t) ? 500 : 400,
-                  }}>{t}</div>
-                ))}
-              </div>
-            </div>
+          {selectedGenre && (
+            <div onClick={() => setSelectedGenre("")} style={{
+              padding: "4px 10px", borderRadius: 20, fontSize: 12, cursor: "pointer",
+              background: "#EEEDFE", color: "#3C3489", border: "0.5px solid #AFA9EC",
+            }}>{selectedGenre} ×</div>
           )}
-          <div style={{ padding: "0 20px", borderTop: "0.5px solid #e5e5e5", paddingTop: 16 }}>
+          {selectedTropes.map(t => (
+            <div key={t} onClick={() => toggleTrope(t)} style={{
+              padding: "4px 10px", borderRadius: 20, fontSize: 12, cursor: "pointer",
+              background: "#EEEDFE", color: "#3C3489", border: "0.5px solid #AFA9EC",
+            }}>{t} ×</div>
+          ))}
+          <div onClick={clearAll} style={{ fontSize: 12, color: "#999", cursor: "pointer", padding: "4px 6px" }}>Limpar tudo</div>
+        </div>
+      )}
+
+      {/* Resultados */}
+      <div style={{ padding: "0 20px" }}>
+        {!hasFilters ? (
+          <div style={{ textAlign: "center", padding: "48px 20px", color: "#999" }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>🔍</div>
+            <div style={{ fontSize: 15, fontWeight: 500, color: "#555", marginBottom: 6 }}>Descubra novos livros</div>
+            <div style={{ fontSize: 13, lineHeight: 1.6 }}>Use o campo de busca, toque em Filtros, ou clique numa tag de trope ou gênero em qualquer livro</div>
+          </div>
+        ) : loading ? (
+          <div style={{ textAlign: "center", padding: "40px 20px", color: "#999", fontSize: 14 }}>Buscando...</div>
+        ) : results.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "40px 20px", color: "#999" }}>
+            <div style={{ fontSize: 15, marginBottom: 4 }}>Nenhum livro encontrado</div>
+            <div style={{ fontSize: 13 }}>Tente outros filtros ou termos de busca</div>
+          </div>
+        ) : (
+          <>
             <div style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>
-              {filtered.length} {filtered.length === 1 ? "livro encontrado" : "livros encontrados"}
-              {selectedTropes.length > 0 && ` com ${selectedTropes.join(" + ")}`}
+              {results.length} {results.length === 1 ? "livro encontrado" : "livros encontrados"}
             </div>
-            {filtered.map(book => (
-              <div key={book.id} onClick={() => onSelectBook(book)} style={{
-                display: "flex", gap: 12, padding: 12, marginBottom: 8,
-                borderRadius: 12, border: "0.5px solid #ddd", cursor: "pointer", background: "#fff",
-              }}>
-                <div style={{ width: 50, height: 75, borderRadius: 6, flexShrink: 0, background: book.cover ? `url(${book.cover}) center/cover` : getGradient(book.title) }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 500 }}>{book.title}</div>
-                  <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{book.authors?.join(", ")}</div>
-                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
-                    {(book.tropes || []).slice(0, 3).map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} onClick={onTropeClick ? (e) => { e.stopPropagation(); onTropeClick(t); } : undefined} />)}
+            {results.map(book => {
+              const inShelf = myBookIds.has(book.google_id);
+              return (
+                <div key={book.id} onClick={() => handleSelectResult(book)} style={{
+                  display: "flex", gap: 12, padding: 12, marginBottom: 8,
+                  borderRadius: 12, border: `0.5px solid ${inShelf ? "#AFA9EC" : "#ddd"}`,
+                  cursor: "pointer", background: inShelf ? "#EEEDFE" : "#fff",
+                }}>
+                  <div style={{ width: 50, height: 75, borderRadius: 6, flexShrink: 0, background: book.cover ? `url(${book.cover}) center/cover` : getGradient(book.title) }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500 }}>{book.title}</div>
+                    <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{(book.authors || []).join(", ")}</div>
+                    {inShelf && <div style={{ fontSize: 11, color: "#534AB7", marginTop: 4, fontWeight: 500 }}>✓ Na sua estante</div>}
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
+                      {(book.tropes || []).slice(0, 3).map(t => (
+                        <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"}
+                          onClick={onTropeClick ? (e) => { e.stopPropagation(); onTropeClick(t); } : undefined} />
+                      ))}
+                    </div>
                   </div>
                 </div>
+              );
+            })}
+          </>
+        )}
+      </div>
+
+      {/* Drawer de filtros */}
+      {drawerOpen && (
+        <>
+          <div onClick={() => setDrawerOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(0,0,0,0.25)" }} />
+          <div style={{
+            position: "fixed", top: 0, right: 0, bottom: 0, width: "82%", maxWidth: 320,
+            background: "#fff", zIndex: 50, boxShadow: "-4px 0 24px rgba(0,0,0,0.12)",
+            overflowY: "auto", padding: "20px 20px 40px",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+              <div style={{ fontSize: 17, fontWeight: 600 }}>Filtros</div>
+              <div onClick={() => setDrawerOpen(false)} style={{ fontSize: 22, color: "#888", cursor: "pointer", lineHeight: 1 }}>×</div>
+            </div>
+
+            {allGenres.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "#666", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>Gêneros</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {allGenres.map(g => (
+                    <div key={g} onClick={() => setSelectedGenre(selectedGenre === g ? "" : g)} style={{
+                      padding: "6px 14px", borderRadius: 20, fontSize: 13, cursor: "pointer",
+                      background: selectedGenre === g ? "#EEEDFE" : "transparent",
+                      color: selectedGenre === g ? "#3C3489" : "#555",
+                      border: `0.5px solid ${selectedGenre === g ? "#AFA9EC" : "#ddd"}`,
+                      fontWeight: selectedGenre === g ? 500 : 400,
+                    }}>{g}</div>
+                  ))}
+                </div>
               </div>
-            ))}
+            )}
+
+            {allTropes.length > 0 && (
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "#666", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>Tropes</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {allTropes.map(t => (
+                    <div key={t} onClick={() => toggleTrope(t)} style={{
+                      padding: "6px 12px", borderRadius: 16, fontSize: 12, cursor: "pointer",
+                      background: selectedTropes.includes(t) ? "#EEEDFE" : "#f5f5f5",
+                      color: selectedTropes.includes(t) ? "#3C3489" : "#555",
+                      border: selectedTropes.includes(t) ? "0.5px solid #AFA9EC" : "0.5px solid transparent",
+                      fontWeight: selectedTropes.includes(t) ? 500 : 400,
+                    }}>{t}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activeFilterCount > 0 && (
+              <div onClick={() => { setSelectedTropes([]); setSelectedGenre(""); }} style={{
+                marginTop: 24, padding: "10px 0", textAlign: "center", fontSize: 13,
+                color: "#999", cursor: "pointer", borderTop: "0.5px solid #eee",
+              }}>Limpar filtros</div>
+            )}
           </div>
         </>
       )}
