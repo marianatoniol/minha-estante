@@ -1008,13 +1008,12 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
   const hasFilters = selectedTropes.length > 0 || !!selectedGenre || searchTerm !== null;
 
   useEffect(() => {
-    if (!hasFilters) { setResults([]); return; }
     setLoading(true);
     let q = supabaseAuth
       .from("books")
       .select("id, google_id, title, authors, cover, genres, tropes, save_count, summary")
       .order("save_count", { ascending: false })
-      .limit(100);
+      .limit(hasFilters ? 100 : 20);
     if (selectedGenre) q = q.contains("genres", [selectedGenre]);
     if (selectedTropes.length > 0) q = q.contains("tropes", selectedTropes);
     q.then(({ data }) => {
@@ -1106,13 +1105,7 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
 
       {/* Resultados */}
       <div style={{ padding: "0 20px" }}>
-        {!hasFilters ? (
-          <div style={{ textAlign: "center", padding: "48px 20px", color: "#999" }}>
-            <div style={{ fontSize: 32, marginBottom: 12 }}>🔍</div>
-            <div style={{ fontSize: 15, fontWeight: 500, color: "#555", marginBottom: 6 }}>Descubra novos livros</div>
-            <div style={{ fontSize: 13, lineHeight: 1.6 }}>Use o campo de busca, toque em Filtros, ou clique numa tag de trope ou gênero em qualquer livro</div>
-          </div>
-        ) : loading ? (
+        {loading ? (
           <div style={{ textAlign: "center", padding: "40px 20px", color: "#999", fontSize: 14 }}>Buscando...</div>
         ) : results.length === 0 ? (
           <div style={{ textAlign: "center", padding: "40px 20px", color: "#999" }}>
@@ -1122,7 +1115,7 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
         ) : (
           <>
             <div style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>
-              {results.length} {results.length === 1 ? "livro encontrado" : "livros encontrados"}
+              {hasFilters ? `${results.length} ${results.length === 1 ? "livro encontrado" : "livros encontrados"}` : "Mais populares do catálogo"}
             </div>
             {results.map(book => {
               const inShelf = myBookIds.has(book.google_id);
