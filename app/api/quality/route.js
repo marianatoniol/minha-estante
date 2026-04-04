@@ -5,6 +5,10 @@ export async function POST(request) {
   try {
     const { title, authors, description, pageCount } = await request.json();
 
+    if (!title || typeof title !== "string" || !title.trim()) {
+      return Response.json({ error: "title is required" }, { status: 400 });
+    }
+
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const message = await client.messages.create({
