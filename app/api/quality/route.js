@@ -18,8 +18,14 @@ export async function POST(request) {
       ],
     });
 
-    const text = message.content[0].text;
-    return Response.json(parseAIJson(text));
+    const textBlock = message.content.find(b => b.type === "text");
+    const text = textBlock?.text || "";
+    if (!text) return Response.json({ is_spam: false, quality_score: 5, reason: "empty" });
+    try {
+      return Response.json(parseAIJson(text));
+    } catch {
+      return Response.json({ is_spam: false, quality_score: 5, reason: "parse_error" });
+    }
   } catch (e) {
     console.error("quality error:", e);
     return Response.json({ is_spam: false, quality_score: 5, reason: "error" }, { status: 500 });

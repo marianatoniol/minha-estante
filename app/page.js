@@ -474,6 +474,7 @@ function BottomNav({ active, onNavigate }) {
 
 function SearchInput({ value, onChange, onSearch, placeholder }) {
   const [open, setOpen] = useState(false);
+  const suppressRef = useRef(false);
   const term = value.trim();
   const showDropdown = open && term.length > 0;
 
@@ -492,7 +493,7 @@ function SearchInput({ value, onChange, onSearch, placeholder }) {
       <input
         value={value}
         onChange={e => { setOpen(true); onChange(e.target.value); }}
-        onKeyDown={e => { if (e.key === "Enter" && term) { setOpen(false); onSearch(term, "title"); } }}
+        onKeyDown={e => { if (e.key === "Enter" && term) { suppressRef.current = true; setOpen(false); onSearch(term, "title"); } }}
         placeholder={placeholder}
         style={{ width: "100%", padding: "10px 14px 10px 36px", borderRadius: 10, background: "#f5f5f5", border: "none", fontSize: 14, outline: "none" }}
       />
@@ -505,7 +506,11 @@ function SearchInput({ value, onChange, onSearch, placeholder }) {
           {options.map((opt, i) => (
             <div
               key={opt.type}
-              onMouseDown={() => { setOpen(false); onSearch(term, opt.type); }}
+              onMouseDown={() => {
+                if (suppressRef.current) { suppressRef.current = false; return; }
+                setOpen(false);
+                onSearch(term, opt.type);
+              }}
               style={{
                 padding: "12px 16px", fontSize: 14, cursor: "pointer",
                 borderBottom: i < options.length - 1 ? "0.5px solid #f0f0f0" : "none",
