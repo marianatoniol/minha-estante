@@ -22,17 +22,16 @@ async function fetchBooks(userId) {
   return data.map(normalizeBookRow);
 }
 
-async function insertBook({ googleId, status, rating }, userId) {
-  let bookId;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, 800));
+async function insertBook({ googleId, bookId: providedBookId, status, rating }, userId) {
+  let bookId = providedBookId;
+
+  if (!bookId) {
     const { data: catalogRow } = await supabaseAuth
       .from("books_catalog")
       .select("book_id")
       .eq("google_id", googleId)
       .maybeSingle();
     bookId = catalogRow?.book_id;
-    if (bookId) break;
   }
 
   if (!bookId) {
@@ -166,14 +165,14 @@ async function saveCanonicalBook(googleId, bookData, classification) {
         }
       }
     } else {
-      return;
+      return null;
     }
   } else {
     bookId = inserted?.id;
     console.log("[saveCanonicalBook] INSERT ok, bookId:", bookId);
   }
 
-  if (!bookId) { console.error("[saveCanonicalBook] bookId is null, skipping books_catalog update"); return; }
+  if (!bookId) { console.error("[saveCanonicalBook] bookId is null, skipping books_catalog update"); return null; }
 
   const { error: updateErr } = await supabaseAuth
     .from("books_catalog")
@@ -181,6 +180,8 @@ async function saveCanonicalBook(googleId, bookData, classification) {
     .eq("google_id", googleId);
   if (updateErr) console.error("[saveCanonicalBook] UPDATE books_catalog error — code:", updateErr.code, "message:", updateErr.message);
   else console.log("[saveCanonicalBook] books_catalog.book_id updated for", googleId);
+
+  return bookId;
 }
 
 // ─── Google Books ─────────────────────────────────────────────────────────────
@@ -1321,7 +1322,7 @@ function ConfigScreen({ books, onImportBook, session, supabaseClient }) {
             if (!cl.canonical_key) {
               cl.canonical_key = `google-id_${book.googleId.slice(0, 8)}`;
             }
-            await saveCanonicalBook(book.googleId, book, cl);
+            book.bookId = await saveCanonicalBook(book.googleId, book, cl);
           }
 
           await onImportBook(book);
@@ -1547,7 +1548,7 @@ export default function App() {
   };
 
   const importBook = async (book) => {
-    await insertBook({ googleId: book.googleId, status: book.status, rating: book.rating }, session.user.id);
+    await insertBook({ googleId: book.googleId, bookId: book.bookId, status: book.status, rating: book.rating }, session.user.id);
     const fresh = await fetchBooks(session.user.id);
     setBooks(fresh);
   };
