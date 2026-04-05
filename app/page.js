@@ -23,13 +23,18 @@ async function fetchBooks(userId) {
 }
 
 async function insertBook({ googleId, status, rating }, userId) {
-  const { data: catalogRow } = await supabaseAuth
-    .from("books_catalog")
-    .select("book_id")
-    .eq("google_id", googleId)
-    .maybeSingle();
+  let bookId;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 800));
+    const { data: catalogRow } = await supabaseAuth
+      .from("books_catalog")
+      .select("book_id")
+      .eq("google_id", googleId)
+      .maybeSingle();
+    bookId = catalogRow?.book_id;
+    if (bookId) break;
+  }
 
-  const bookId = catalogRow?.book_id;
   if (!bookId) {
     console.error("insertBook: book_id não encontrado em books_catalog para", googleId);
     return null;
@@ -1311,6 +1316,9 @@ function ConfigScreen({ books, onImportBook, session, supabaseClient }) {
           book.summary = cl.summary || "";
 
           if (book.googleId) {
+            if (!cl.canonical_key) {
+              cl.canonical_key = `google-id_${book.googleId.slice(0, 8)}`;
+            }
             await saveCanonicalBook(book.googleId, book, cl);
           }
 
