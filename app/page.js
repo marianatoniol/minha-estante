@@ -787,6 +787,7 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
 
   // ── painel de detalhe / adicionar livro ───────────────────────────────────
   const [selected, setSelected] = useState(null);
+  const [selectedBookId, setSelectedBookId] = useState(null);
   const [classification, setClassification] = useState(null);
   const [status, setStatus] = useState("quero ler");
   const [saving, setSaving] = useState(false);
@@ -865,7 +866,7 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
     setCatalogLoading(true);
     let q = supabaseAuth
       .from("books")
-      .select("id, google_id, title, authors, cover, genres, tropes, save_count, summary")
+      .select("id, google_id, title, authors, cover, genres, tropes, save_count, summary, description, page_count")
       .order("save_count", { ascending: false })
       .limit(hasCatalogFilters ? 100 : 20);
     if (selectedGenre) q = q.contains("genres", [selectedGenre]);
@@ -882,6 +883,7 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
       return;
     }
     setExploreGlobalRating(null);
+    setSelectedBookId(null);
     setSelected(book);
     setClassification(null);
     const cached = await getClassificationForBook(book.googleId);
@@ -904,10 +906,11 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
       title: catalogBook.title,
       authors: catalogBook.authors || [],
       cover: catalogBook.cover || null,
-      description: "",
-      pageCount: 0,
+      description: catalogBook.description || "",
+      pageCount: catalogBook.page_count || 0,
     };
     setSelected(bookObj);
+    setSelectedBookId(catalogBook.id || null);
 
     if (catalogBook.genres && catalogBook.genres.length > 0) {
       setClassification({
@@ -930,7 +933,7 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
   const doSave = async () => {
     if (!selected) return;
     setSaving(true);
-    await onSave({ googleId: selected.googleId, status, rating: 0 });
+    await onSave({ googleId: selected.googleId, bookId: selectedBookId, status, rating: 0 });
     setSaving(false);
     setSelected(null);
   };
@@ -1634,8 +1637,8 @@ export default function App() {
 
   const navigate = (s) => { setScreen(s); setSelectedBook(null); };
 
-  const addBook = async ({ googleId, status, rating }) => {
-    await insertBook({ googleId, status, rating }, session.user.id);
+  const addBook = async ({ googleId, bookId, status, rating }) => {
+    await insertBook({ googleId, bookId, status, rating }, session.user.id);
     const fresh = await fetchBooks(session.user.id);
     setBooks(fresh);
     setScreen("home");
