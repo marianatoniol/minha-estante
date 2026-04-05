@@ -1245,6 +1245,7 @@ function ConfigScreen({ books, onImportBook, session, supabaseClient }) {
   const [importing, setImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(null);
   const fileInputRef = useRef(null);
+  const cancelImportRef = useRef(false);
 
   const normTitleSimple = (s) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 
@@ -1268,6 +1269,7 @@ function ConfigScreen({ books, onImportBook, session, supabaseClient }) {
     if (rows.length === 0) return;
 
     const existingTitles = new Set(books.map(b => normTitleSimple(b.title)));
+    cancelImportRef.current = false;
     setImporting(true);
     setImportProgress(null);
     let imported = 0;
@@ -1331,10 +1333,13 @@ function ConfigScreen({ books, onImportBook, session, supabaseClient }) {
         skipped++;
       }
 
+      if (cancelImportRef.current) break;
+
       if (i < rows.length - 1) await new Promise(r => setTimeout(r, 500));
     }
 
-    setImportProgress({ done: true, imported, skipped });
+    const cancelled = cancelImportRef.current;
+    setImportProgress({ done: true, imported, skipped, cancelled });
     setImporting(false);
     e.target.value = "";
   };
@@ -1391,23 +1396,41 @@ function ConfigScreen({ books, onImportBook, session, supabaseClient }) {
           )}
 
           {importProgress?.done && (
-            <div style={{ padding: "10px 12px", borderRadius: 8, background: "#E1F5EE", marginBottom: 12, fontSize: 13, color: "#085041" }}>
+            <div style={{
+              padding: "10px 12px", borderRadius: 8, marginBottom: 12, fontSize: 13,
+              background: importProgress.cancelled ? "#FFF8E1" : "#E1F5EE",
+              color: importProgress.cancelled ? "#7A5200" : "#085041",
+            }}>
+              {importProgress.cancelled ? "Importacao cancelada — " : ""}
               {importProgress.imported} {importProgress.imported === 1 ? "livro importado" : "livros importados"}
               {importProgress.skipped > 0 && `, ${importProgress.skipped} ignorados por ja existirem`}.
             </div>
           )}
 
           <input ref={fileInputRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleCsvImport} />
-          <button
-            disabled={importing}
-            onClick={() => { setImportProgress(null); fileInputRef.current?.click(); }}
-            style={{
-              padding: "9px 20px", borderRadius: 8, border: "0.5px solid #AFA9EC",
-              background: importing ? "#f0f0f0" : "#EEEDFE", color: importing ? "#999" : "#3C3489",
-              fontSize: 13, fontWeight: 500, cursor: importing ? "default" : "pointer",
-            }}>
-            {importing ? "Importando..." : "Escolher arquivo CSV"}
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              disabled={importing}
+              onClick={() => { setImportProgress(null); fileInputRef.current?.click(); }}
+              style={{
+                padding: "9px 20px", borderRadius: 8, border: "0.5px solid #AFA9EC",
+                background: importing ? "#f0f0f0" : "#EEEDFE", color: importing ? "#999" : "#3C3489",
+                fontSize: 13, fontWeight: 500, cursor: importing ? "default" : "pointer",
+              }}>
+              {importing ? "Importando..." : "Escolher arquivo CSV"}
+            </button>
+            {importing && (
+              <button
+                onClick={() => { cancelImportRef.current = true; }}
+                style={{
+                  padding: "9px 20px", borderRadius: 8, border: "0.5px solid #f5a0a0",
+                  background: "#fcebeb", color: "#a32d2d",
+                  fontSize: 13, fontWeight: 500, cursor: "pointer",
+                }}>
+                Parar importacao
+              </button>
+            )}
+          </div>
         </div>
 
         <div style={{ padding: 16, borderRadius: 12, border: "0.5px solid #f5c1c1", background: "#fcebeb" }}>
