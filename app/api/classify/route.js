@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { parseAIJson } from "../../../lib/utils";
+import { safeParseAIJson } from "../../../lib/utils";
 
 const TROPES_LIST = [
   "enemies to lovers","slow burn","forced proximity","found family","friends to lovers",
@@ -22,9 +22,12 @@ export async function POST(request) {
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+    const DEFAULT = { canonical_key: "", genres: [], tropes: [], summary: "" };
+
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 1000,
+      system: "Voce e um classificador literario. Sua resposta deve ser EXCLUSIVAMENTE um objeto JSON valido, sem nenhum texto antes ou depois, sem explicacoes, sem introducoes, sem markdown, sem crases.",
       tools: [{ type: "web_search_20250305", name: "web_search" }],
       messages: [
         {
@@ -37,7 +40,7 @@ Sinopse: ${description}
 
 Importante: se este livro for uma traducao, identifica o titulo original e o sobrenome do autor no idioma original. A canonical_key deve ser gerada SEMPRE com base no titulo original (ex: para "De sangue e cinzas" usa armentrout_from-blood-and-ash, para "A Corte de Rosas e Espinhos" usa maas_a-court-of-thorns-and-roses).
 
-Responda APENAS com JSON valido, sem markdown, sem crases, neste formato exato:
+Responda EXCLUSIVAMENTE com o objeto JSON abaixo, sem nenhum texto antes ou depois:
 {"canonical_key":"sobrenome-autor_titulo-curto","genres":["genero1","genero2"],"tropes":["trope1","trope2","trope3"],"summary":"resumo de 1 frase do livro em portugues"}
 
 Use apenas generos desta lista: ${GENRES.join(", ")}
@@ -50,7 +53,7 @@ Para canonical_key: use formato sobrenome-autor_titulo-curto em lowercase sem ac
 
     const textBlock = message.content.find(b => b.type === "text");
     const text = textBlock?.text || "";
-    const result = parseAIJson(text);
+    const result = safeParseAIJson(text, DEFAULT);
 
     return Response.json(result);
   } catch (e) {
