@@ -336,25 +336,6 @@ async function searchGoogleBooks(query, searchType = "title") {
   } catch { return []; }
 }
 
-async function searchByTrope(trope) {
-  try {
-    const { data, error } = await supabaseAuth
-      .from("books")
-      .select("google_id, title, authors, cover, genres, tropes, summary")
-      .contains("tropes", [trope]);
-    if (error) { console.error("searchByTrope error:", error); return []; }
-    return (data || []).map(r => ({
-      googleId: r.google_id,
-      title: r.title,
-      authors: r.authors,
-      cover: r.cover,
-      genres: r.genres,
-      tropes: r.tropes,
-      summary: r.summary,
-    }));
-  } catch (e) { console.error("searchByTrope error:", e); return []; }
-}
-
 // ─── Claude AI ────────────────────────────────────────────────────────────────
 
 async function classifyWithAI(title, authors, description) {
@@ -482,6 +463,7 @@ function SearchInput({ value, onChange, onSearch, placeholder }) {
     { icon: "📖", label: "como título", type: "title" },
     { icon: "✍️", label: "como autor", type: "author" },
     { icon: "✨", label: "como trope", type: "trope" },
+    { icon: "🏷️", label: "como gênero", type: "genre" },
   ];
 
   return (
@@ -594,220 +576,6 @@ function HomeScreen({ books, loading, onSelectBook, onSearch, statusFilter, setS
             ))}
           </div>
         </>
-      )}
-    </div>
-  );
-}
-
-// ─── Add Book Screen ──────────────────────────────────────────────────────────
-
-function AddBookScreen({ onBack, onSave, myBooks, initialQuery, initialSearchType, onOpenExisting }) {
-  const [query, setQuery] = useState(typeof initialQuery === "string" ? initialQuery : "");
-  const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState(null);
-  const [status, setStatus] = useState("quero ler");
-  const [sortOrder, setSortOrder] = useState("relevance");
-  const [classification, setClassification] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [searchType, setSearchType] = useState(initialSearchType || "title");
-  const [searched, setSearched] = useState(false);
-
-  const myBookIds = new Set(myBooks.map(b => b.googleId));
-
-  const doSearch = async (q, type) => {
-    const raw = q || query;
-    if (!raw || typeof raw !== "string" || !raw.trim()) return;
-    const term = raw.trim();
-    const kind = type || searchType;
-    setLoading(true);
-    setSelected(null);
-    setClassification(null);
-    const r = kind === "trope" ? await searchByTrope(term) : await searchGoogleBooks(term, kind);
-    setResults(r);
-    setSearched(true);
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    if (initialQuery) doSearch(initialQuery, initialSearchType || "title");
-  }, []);
-
-  const openBook = async (book) => {
-    if (myBookIds.has(book.googleId)) {
-      const existing = myBooks.find(b => b.googleId === book.googleId);
-      onOpenExisting(existing);
-      return;
-    }
-
-    setSelected(book);
-    setClassification(null);
-
-    const cached = await getClassificationForBook(book.googleId);
-    if (cached && cached.genres.length > 0) {
-      setClassification({
-        genres: cached.genres,
-        tropes: cached.tropes,
-        summary: cached.summary,
-      });
-      return;
-    }
-
-    const result = await classifyWithAI(book.title, book.authors.join(", "), book.description);
-    await saveCanonicalBook(book.googleId, book, result);
-    setClassification(result);
-  };
-
-  const doSave = async () => {
-    if (!selected) return;
-    setSaving(true);
-    await onSave({ googleId: selected.googleId, status, rating: 0 });
-    setSaving(false);
-  };
-
-  return (
-    <div style={{ paddingBottom: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 20px 16px" }}>
-        <svg onClick={() => selected ? setSelected(null) : onBack()} width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ cursor: "pointer" }}>
-          <path d="M15 18l-6-6 6-6"/>
-        </svg>
-        <h1 style={{ fontSize: 20, fontWeight: 600 }}>{selected ? selected.title : "Adicionar livro"}</h1>
-      </div>
-
-      {!selected && (
-        <>
-          <div style={{ margin: "0 20px 16px" }}>
-            <SearchInput
-              value={query}
-              onChange={text => setQuery(text)}
-              onSearch={(term, type) => { setSearchType(type); doSearch(term, type); }}
-              placeholder="Nome do livro, autor ou trope..."
-            />
-          </div>
-
-          {results.length > 0 && (
-            <div style={{ padding: "0 20px" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <div style={{ fontSize: 13, color: "#666" }}>{results.length} resultados encontrados</div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {["relevance", "recent"].map(opt => (
-                    <button key={opt} onClick={() => setSortOrder(opt)} style={{
-                      fontSize: 12, padding: "3px 10px", borderRadius: 20, cursor: "pointer",
-                      border: "0.5px solid #ccc",
-                      background: sortOrder === opt ? "#534AB7" : "transparent",
-                      color: sortOrder === opt ? "#fff" : "#666",
-                      fontWeight: sortOrder === opt ? 500 : 400,
-                    }}>{opt === "relevance" ? "Relevancia" : "Mais recentes"}</button>
-                  ))}
-                </div>
-              </div>
-              {(sortOrder === "recent"
-                ? [...results].sort((a, b) => (b.publishedDate || "").localeCompare(a.publishedDate || ""))
-                : results
-              ).map(r => {
-                const inShelf = myBookIds.has(r.googleId);
-                return (
-                  <div key={r.googleId} onClick={() => openBook(r)} style={{
-                    display: "flex", gap: 12, padding: 12, marginBottom: 8,
-                    borderRadius: 12, border: `0.5px solid ${inShelf ? "#AFA9EC" : "#ddd"}`,
-                    cursor: "pointer", background: inShelf ? "#EEEDFE" : "#fff",
-                  }}>
-                    <div style={{
-                      width: 50, height: 75, borderRadius: 6, flexShrink: 0,
-                      background: r.cover ? `url(${r.cover}) center/cover` : getGradient(r.title),
-                    }} />
-                    <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                      <div style={{ fontSize: 14, fontWeight: 500, lineHeight: 1.3 }}>{r.title}</div>
-                      <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{r.authors.join(", ")}</div>
-                      {r.publishedDate && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{r.publishedDate.substring(0, 4)}</div>}
-                      {inShelf && <div style={{ fontSize: 11, color: "#534AB7", marginTop: 4, fontWeight: 500 }}>✓ Na sua estante</div>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {results.length === 0 && !loading && (
-            <div style={{ textAlign: "center", padding: "40px 20px", color: "#999" }}>
-              <div style={{ fontSize: 14 }}>
-                {searched && searchType === "trope"
-                  ? "Nenhum livro encontrado com esse trope ainda. O catálogo cresce conforme os livros são explorados no app."
-                  : "Busque pelo nome do livro ou autor"}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {selected && (
-        <div style={{ padding: "0 20px" }}>
-          <div style={{ display: "flex", gap: 14, marginBottom: 16 }}>
-            <div style={{
-              width: 90, height: 135, borderRadius: 10, flexShrink: 0,
-              background: selected.cover ? `url(${selected.cover}) center/cover` : getGradient(selected.title),
-            }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 17, fontWeight: 600, lineHeight: 1.3 }}>{selected.title}</div>
-              <div style={{ fontSize: 13, color: "#666", marginTop: 4 }}>{selected.authors.join(", ")}</div>
-              {selected.pageCount > 0 && <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>{selected.pageCount} páginas</div>}
-            </div>
-          </div>
-
-          <div style={{ padding: 14, borderRadius: 12, background: "#f5f5f5", marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: "#444" }}>
-              {classification ? "Classificação por IA" : "Classificando com IA..."}
-            </div>
-            {!classification ? (
-              <TropeSkeleton />
-            ) : (
-              <>
-                {classification.genres?.length > 0 && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                    {classification.genres.map(g => <TagPill key={g} label={g} color={GENRE_COLORS[g] || "purple"} />)}
-                  </div>
-                )}
-                {classification.tropes?.length > 0 && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                    {classification.tropes.map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} />)}
-                  </div>
-                )}
-                {classification.summary && (
-                  <div style={{ fontSize: 12, color: "#666", fontStyle: "italic", lineHeight: 1.5 }}>{classification.summary}</div>
-                )}
-              </>
-            )}
-          </div>
-
-          {selected.description && (
-            <div style={{ fontSize: 13, color: "#666", lineHeight: 1.5, marginBottom: 16,
-              display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-              {selected.description.replace(/<[^>]*>/g, "")}
-            </div>
-          )}
-
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Status de leitura</div>
-            <div style={{ display: "flex", gap: 8 }}>
-              {Object.entries(STATUS_LABELS).map(([key, label]) => (
-                <div key={key} onClick={() => setStatus(key)} style={{
-                  flex: 1, padding: "10px 0", borderRadius: 10, textAlign: "center",
-                  fontSize: 13, cursor: "pointer", fontWeight: status === key ? 500 : 400,
-                  background: status === key ? "#EEEDFE" : "transparent",
-                  color: status === key ? "#3C3489" : "#666",
-                  border: `0.5px solid ${status === key ? "#AFA9EC" : "#ddd"}`,
-                }}>{label}</div>
-              ))}
-            </div>
-          </div>
-          <button onClick={doSave} disabled={saving || !classification} style={{
-            width: "100%", padding: "14px", borderRadius: 12, border: "none",
-            background: saving || !classification ? "#AFA9EC" : "#534AB7",
-            color: "white", fontSize: 15, fontWeight: 600, cursor: "pointer",
-          }}>
-            {saving ? "Salvando..." : !classification ? "Aguardando classificação..." : "Salvar na estante"}
-          </button>
-        </div>
       )}
     </div>
   );
@@ -974,28 +742,36 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete, userId, onTropeCli
 
 // ─── Explore Screen ───────────────────────────────────────────────────────────
 
-function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeGenre }) {
-  const [query, setQuery] = useState("");
-  const [searchTerm, setSearchTerm] = useState(null);
+function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeGenre, onSave, initialQuery, initialSearchType }) {
+  // ── busca por título/autor (Google Books) ─────────────────────────────────
+  const [query, setQuery] = useState(initialQuery || "");
+  const [activeSearch, setActiveSearch] = useState(null); // {term, type}
+  const [googleResults, setGoogleResults] = useState([]);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [sortOrder, setSortOrder] = useState("relevance");
+
+  // ── painel de detalhe / adicionar livro ───────────────────────────────────
+  const [selected, setSelected] = useState(null);
+  const [classification, setClassification] = useState(null);
+  const [status, setStatus] = useState("quero ler");
+  const [saving, setSaving] = useState(false);
+
+  // ── catálogo Supabase + filtros ───────────────────────────────────────────
   const [selectedTropes, setSelectedTropes] = useState(activeTrope ? [activeTrope] : []);
   const [selectedGenre, setSelectedGenre] = useState(activeGenre || "");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [catalogResults, setCatalogResults] = useState([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [allGenres, setAllGenres] = useState([]);
   const [allTropes, setAllTropes] = useState([]);
 
   const myBookIds = new Set(books.map(b => b.googleId).filter(Boolean));
 
-  useEffect(() => {
-    if (activeTrope) setSelectedTropes([activeTrope]);
-  }, [activeTrope]);
+  // sincroniza filtros vindos de props externas (clique em tag)
+  useEffect(() => { if (activeTrope) setSelectedTropes([activeTrope]); }, [activeTrope]);
+  useEffect(() => { if (activeGenre !== undefined) setSelectedGenre(activeGenre || ""); }, [activeGenre]);
 
-  useEffect(() => {
-    if (activeGenre !== undefined) setSelectedGenre(activeGenre || "");
-  }, [activeGenre]);
-
-  // Busca todos os gêneros e tropes do catálogo global para o drawer
+  // gêneros/tropes para o drawer
   useEffect(() => {
     supabaseAuth.from("books").select("genres, tropes").then(({ data }) => {
       if (!data) return;
@@ -1004,48 +780,171 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
     });
   }, []);
 
-  // Busca resultados no catálogo global quando filtros ou busca mudam
-  const hasFilters = selectedTropes.length > 0 || !!selectedGenre || searchTerm !== null;
+  // dispara busca ao montar se veio da home com termo inicial
+  useEffect(() => {
+    if (initialQuery && initialSearchType) doSearch(initialQuery, initialSearchType);
+  }, []);
+
+  // ── busca no Google Books ─────────────────────────────────────────────────
+  const doSearch = async (term, type) => {
+    if (!term?.trim()) return;
+    setSelected(null);
+    setActiveSearch({ term: term.trim(), type });
+    if (type === "title" || type === "author") {
+      setGoogleLoading(true);
+      const r = await searchGoogleBooks(term.trim(), type);
+      setGoogleResults(r);
+      setGoogleLoading(false);
+    }
+    // trope/genre: handled by catalog useEffect below
+  };
+
+  // ── catálogo Supabase (default + filtros + busca trope/genre) ─────────────
+  const catalogSearchTrope = activeSearch?.type === "trope" ? activeSearch.term : null;
+  const catalogSearchGenre = activeSearch?.type === "genre" ? activeSearch.term : null;
+  const hasCatalogFilters = selectedTropes.length > 0 || !!selectedGenre || !!catalogSearchTrope || !!catalogSearchGenre;
 
   useEffect(() => {
-    setLoading(true);
+    setCatalogLoading(true);
     let q = supabaseAuth
       .from("books")
       .select("id, google_id, title, authors, cover, genres, tropes, save_count, summary")
       .order("save_count", { ascending: false })
-      .limit(hasFilters ? 100 : 20);
+      .limit(hasCatalogFilters ? 100 : 20);
     if (selectedGenre) q = q.contains("genres", [selectedGenre]);
-    if (selectedTropes.length > 0) q = q.contains("tropes", selectedTropes);
-    q.then(({ data }) => {
-      let filtered = data || [];
-      if (searchTerm) {
-        const term = searchTerm.toLowerCase();
-        filtered = filtered.filter(b =>
-          b.title?.toLowerCase().includes(term) ||
-          (b.genres || []).some(g => g.toLowerCase().includes(term)) ||
-          (b.tropes || []).some(t => t.toLowerCase().includes(term))
-        );
-      }
-      setResults(filtered);
-      setLoading(false);
-    });
-  }, [searchTerm, selectedGenre, selectedTropes, hasFilters]);
+    if (catalogSearchGenre) q = q.contains("genres", [catalogSearchGenre]);
+    const tropes = [...selectedTropes, ...(catalogSearchTrope ? [catalogSearchTrope] : [])];
+    if (tropes.length > 0) q = q.contains("tropes", tropes);
+    q.then(({ data }) => { setCatalogResults(data || []); setCatalogLoading(false); });
+  }, [selectedGenre, selectedTropes, catalogSearchTrope, catalogSearchGenre]);
 
-  const activeFilterCount = selectedTropes.length + (selectedGenre ? 1 : 0);
+  // ── abertura de livro do Google Books ────────────────────────────────────
+  const openGoogleBook = async (book) => {
+    if (myBookIds.has(book.googleId)) {
+      onSelectBook(books.find(b => b.googleId === book.googleId));
+      return;
+    }
+    setSelected(book);
+    setClassification(null);
+    const cached = await getClassificationForBook(book.googleId);
+    if (cached && cached.genres.length > 0) { setClassification(cached); return; }
+    const result = await classifyWithAI(book.title, book.authors.join(", "), book.description);
+    await saveCanonicalBook(book.googleId, book, result);
+    setClassification(result);
+  };
 
-  const handleSelectResult = (catalogBook) => {
+  // ── abertura de livro do catálogo ────────────────────────────────────────
+  const openCatalogBook = (catalogBook) => {
     const shelfBook = books.find(b => b.googleId === catalogBook.google_id);
     if (shelfBook) { onSelectBook(shelfBook); return; }
-    onSelectBook({
-      id: null, googleId: catalogBook.google_id, title: catalogBook.title,
-      authors: catalogBook.authors || [], cover: catalogBook.cover || null,
-      genres: catalogBook.genres || [], tropes: catalogBook.tropes || [],
-      summary: catalogBook.summary || "", status: null, rating: 0, description: "", pageCount: 0,
+    // livro não está na estante — mostra painel de adição
+    setSelected({
+      googleId: catalogBook.google_id,
+      title: catalogBook.title,
+      authors: catalogBook.authors || [],
+      cover: catalogBook.cover || null,
+      description: "",
+      pageCount: 0,
+    });
+    setClassification({
+      genres: catalogBook.genres || [],
+      tropes: catalogBook.tropes || [],
+      summary: catalogBook.summary || "",
     });
   };
 
+  const doSave = async () => {
+    if (!selected) return;
+    setSaving(true);
+    await onSave({ googleId: selected.googleId, status, rating: 0 });
+    setSaving(false);
+    setSelected(null);
+  };
+
   const toggleTrope = (t) => setSelectedTropes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
-  const clearAll = () => { setSelectedTropes([]); setSelectedGenre(""); setSearchTerm(null); setQuery(""); };
+  const clearAll = () => { setSelectedTropes([]); setSelectedGenre(""); setActiveSearch(null); setQuery(""); setGoogleResults([]); };
+  const activeFilterCount = selectedTropes.length + (selectedGenre ? 1 : 0);
+  const showGoogleMode = activeSearch && (activeSearch.type === "title" || activeSearch.type === "author");
+
+  // ── render: painel de detalhe ─────────────────────────────────────────────
+  if (selected) {
+    return (
+      <div style={{ paddingBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 20px 16px" }}>
+          <svg onClick={() => setSelected(null)} width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ cursor: "pointer" }}>
+            <path d="M15 18l-6-6 6-6"/>
+          </svg>
+          <h1 style={{ fontSize: 20, fontWeight: 600 }}>{selected.title}</h1>
+        </div>
+        <div style={{ padding: "0 20px" }}>
+          <div style={{ display: "flex", gap: 14, marginBottom: 16 }}>
+            <div style={{ width: 90, height: 135, borderRadius: 10, flexShrink: 0, background: selected.cover ? `url(${selected.cover}) center/cover` : getGradient(selected.title) }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 17, fontWeight: 600, lineHeight: 1.3 }}>{selected.title}</div>
+              <div style={{ fontSize: 13, color: "#666", marginTop: 4 }}>{selected.authors.join(", ")}</div>
+              {selected.pageCount > 0 && <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>{selected.pageCount} páginas</div>}
+            </div>
+          </div>
+          <div style={{ padding: 14, borderRadius: 12, background: "#f5f5f5", marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: "#444" }}>
+              {classification ? "Classificação por IA" : "Classificando com IA..."}
+            </div>
+            {!classification ? <TropeSkeleton /> : (
+              <>
+                {classification.genres?.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                    {classification.genres.map(g => <TagPill key={g} label={g} color={GENRE_COLORS[g] || "purple"} />)}
+                  </div>
+                )}
+                {classification.tropes?.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                    {classification.tropes.map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} />)}
+                  </div>
+                )}
+                {classification.summary && (
+                  <div style={{ fontSize: 12, color: "#666", fontStyle: "italic", lineHeight: 1.5 }}>{classification.summary}</div>
+                )}
+              </>
+            )}
+          </div>
+          {selected.description && (
+            <div style={{ fontSize: 13, color: "#666", lineHeight: 1.5, marginBottom: 16,
+              display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+              {selected.description.replace(/<[^>]*>/g, "")}
+            </div>
+          )}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Status de leitura</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {Object.entries(STATUS_LABELS).map(([key, label]) => (
+                <div key={key} onClick={() => setStatus(key)} style={{
+                  flex: 1, padding: "10px 0", borderRadius: 10, textAlign: "center",
+                  fontSize: 13, cursor: "pointer", fontWeight: status === key ? 500 : 400,
+                  background: status === key ? "#EEEDFE" : "transparent",
+                  color: status === key ? "#3C3489" : "#666",
+                  border: `0.5px solid ${status === key ? "#AFA9EC" : "#ddd"}`,
+                }}>{label}</div>
+              ))}
+            </div>
+          </div>
+          <button onClick={doSave} disabled={saving || !classification} style={{
+            width: "100%", padding: "14px", borderRadius: 12, border: "none",
+            background: saving || !classification ? "#AFA9EC" : "#534AB7",
+            color: "white", fontSize: 15, fontWeight: 600, cursor: "pointer",
+          }}>
+            {saving ? "Salvando..." : !classification ? "Aguardando classificação..." : "Salvar na estante"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── render: lista ─────────────────────────────────────────────────────────
+  const sortedGoogleResults = showGoogleMode
+    ? (sortOrder === "recent"
+        ? [...googleResults].sort((a, b) => (b.publishedDate || "").localeCompare(a.publishedDate || ""))
+        : googleResults)
+    : [];
 
   return (
     <div style={{ paddingBottom: 8 }}>
@@ -1061,8 +960,8 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
         <SearchInput
           value={query}
           onChange={setQuery}
-          onSearch={(term) => { setSearchTerm(term); }}
-          placeholder="Buscar por trope ou gênero..."
+          onSearch={(term, type) => doSearch(term, type)}
+          placeholder="Buscar por título, autor, trope ou gênero..."
         />
         <div onClick={() => setDrawerOpen(true)} style={{
           display: "flex", alignItems: "center", gap: 6, padding: "9px 14px",
@@ -1078,14 +977,14 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
         </div>
       </div>
 
-      {/* Chips de filtros ativos */}
-      {(activeFilterCount > 0 || searchTerm) && (
+      {/* Chips de filtros/busca ativos */}
+      {(activeFilterCount > 0 || activeSearch) && (
         <div style={{ padding: "0 20px 10px", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          {searchTerm && (
-            <div onClick={() => { setSearchTerm(null); setQuery(""); }} style={{
+          {activeSearch && (
+            <div onClick={() => { setActiveSearch(null); setQuery(""); setGoogleResults([]); }} style={{
               padding: "4px 10px", borderRadius: 20, fontSize: 12, cursor: "pointer",
               background: "#f5f5f5", color: "#444", border: "0.5px solid #ddd",
-            }}>"{searchTerm}" ×</div>
+            }}>"{activeSearch.term}" ×</div>
           )}
           {selectedGenre && (
             <div onClick={() => setSelectedGenre("")} style={{
@@ -1103,46 +1002,96 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
         </div>
       )}
 
-      {/* Resultados */}
-      <div style={{ padding: "0 20px" }}>
-        {loading ? (
-          <div style={{ textAlign: "center", padding: "40px 20px", color: "#999", fontSize: 14 }}>Buscando...</div>
-        ) : results.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "40px 20px", color: "#999" }}>
-            <div style={{ fontSize: 15, marginBottom: 4 }}>Nenhum livro encontrado</div>
-            <div style={{ fontSize: 13 }}>Tente outros filtros ou termos de busca</div>
-          </div>
-        ) : (
-          <>
-            <div style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>
-              {hasFilters ? `${results.length} ${results.length === 1 ? "livro encontrado" : "livros encontrados"}` : "Mais populares do catálogo"}
-            </div>
-            {results.map(book => {
-              const inShelf = myBookIds.has(book.google_id);
-              return (
-                <div key={book.id} onClick={() => handleSelectResult(book)} style={{
-                  display: "flex", gap: 12, padding: 12, marginBottom: 8,
-                  borderRadius: 12, border: `0.5px solid ${inShelf ? "#AFA9EC" : "#ddd"}`,
-                  cursor: "pointer", background: inShelf ? "#EEEDFE" : "#fff",
-                }}>
-                  <div style={{ width: 50, height: 75, borderRadius: 6, flexShrink: 0, background: book.cover ? `url(${book.cover}) center/cover` : getGradient(book.title) }} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 500 }}>{book.title}</div>
-                    <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{(book.authors || []).join(", ")}</div>
-                    {inShelf && <div style={{ fontSize: 11, color: "#534AB7", marginTop: 4, fontWeight: 500 }}>✓ Na sua estante</div>}
-                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
-                      {(book.tropes || []).slice(0, 3).map(t => (
-                        <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"}
-                          onClick={onTropeClick ? (e) => { e.stopPropagation(); onTropeClick(t); } : undefined} />
-                      ))}
+      {/* Resultados Google Books (busca título/autor) */}
+      {showGoogleMode && (
+        <div style={{ padding: "0 20px" }}>
+          {googleLoading ? (
+            <div style={{ textAlign: "center", padding: "40px 20px", color: "#999", fontSize: 14 }}>Buscando...</div>
+          ) : googleResults.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 20px", color: "#999", fontSize: 14 }}>Nenhum resultado encontrado</div>
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <div style={{ fontSize: 13, color: "#666" }}>{googleResults.length} resultados</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {["relevance", "recent"].map(opt => (
+                    <button key={opt} onClick={() => setSortOrder(opt)} style={{
+                      fontSize: 12, padding: "3px 10px", borderRadius: 20, cursor: "pointer",
+                      border: "0.5px solid #ccc",
+                      background: sortOrder === opt ? "#534AB7" : "transparent",
+                      color: sortOrder === opt ? "#fff" : "#666",
+                      fontWeight: sortOrder === opt ? 500 : 400,
+                    }}>{opt === "relevance" ? "Relevância" : "Mais recentes"}</button>
+                  ))}
+                </div>
+              </div>
+              {sortedGoogleResults.map(r => {
+                const inShelf = myBookIds.has(r.googleId);
+                return (
+                  <div key={r.googleId} onClick={() => openGoogleBook(r)} style={{
+                    display: "flex", gap: 12, padding: 12, marginBottom: 8,
+                    borderRadius: 12, border: `0.5px solid ${inShelf ? "#AFA9EC" : "#ddd"}`,
+                    cursor: "pointer", background: inShelf ? "#EEEDFE" : "#fff",
+                  }}>
+                    <div style={{ width: 50, height: 75, borderRadius: 6, flexShrink: 0, background: r.cover ? `url(${r.cover}) center/cover` : getGradient(r.title) }} />
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                      <div style={{ fontSize: 14, fontWeight: 500, lineHeight: 1.3 }}>{r.title}</div>
+                      <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{r.authors.join(", ")}</div>
+                      {r.publishedDate && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{r.publishedDate.substring(0, 4)}</div>}
+                      {inShelf && <div style={{ fontSize: 11, color: "#534AB7", marginTop: 4, fontWeight: 500 }}>✓ Na sua estante</div>}
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </>
-        )}
-      </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Resultados catálogo (default / filtros / busca trope|genre) */}
+      {!showGoogleMode && (
+        <div style={{ padding: "0 20px" }}>
+          {catalogLoading ? (
+            <div style={{ textAlign: "center", padding: "40px 20px", color: "#999", fontSize: 14 }}>Buscando...</div>
+          ) : catalogResults.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 20px", color: "#999" }}>
+              <div style={{ fontSize: 15, marginBottom: 4 }}>Nenhum livro encontrado</div>
+              <div style={{ fontSize: 13 }}>Tente outros filtros</div>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 13, color: "#666", marginBottom: 12 }}>
+                {hasCatalogFilters
+                  ? `${catalogResults.length} ${catalogResults.length === 1 ? "livro encontrado" : "livros encontrados"}`
+                  : "Mais populares do catálogo"}
+              </div>
+              {catalogResults.map(book => {
+                const inShelf = myBookIds.has(book.google_id);
+                return (
+                  <div key={book.id} onClick={() => openCatalogBook(book)} style={{
+                    display: "flex", gap: 12, padding: 12, marginBottom: 8,
+                    borderRadius: 12, border: `0.5px solid ${inShelf ? "#AFA9EC" : "#ddd"}`,
+                    cursor: "pointer", background: inShelf ? "#EEEDFE" : "#fff",
+                  }}>
+                    <div style={{ width: 50, height: 75, borderRadius: 6, flexShrink: 0, background: book.cover ? `url(${book.cover}) center/cover` : getGradient(book.title) }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 500 }}>{book.title}</div>
+                      <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{(book.authors || []).join(", ")}</div>
+                      {inShelf && <div style={{ fontSize: 11, color: "#534AB7", marginTop: 4, fontWeight: 500 }}>✓ Na sua estante</div>}
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
+                        {(book.tropes || []).slice(0, 3).map(t => (
+                          <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"}
+                            onClick={onTropeClick ? (e) => { e.stopPropagation(); onTropeClick(t); } : undefined} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Drawer de filtros */}
       {drawerOpen && (
@@ -1157,7 +1106,6 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
               <div style={{ fontSize: 17, fontWeight: 600 }}>Filtros</div>
               <div onClick={() => setDrawerOpen(false)} style={{ fontSize: 22, color: "#888", cursor: "pointer", lineHeight: 1 }}>×</div>
             </div>
-
             {allGenres.length > 0 && (
               <div style={{ marginBottom: 20 }}>
                 <div style={{ fontSize: 13, fontWeight: 500, color: "#666", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>Gêneros</div>
@@ -1174,7 +1122,6 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
                 </div>
               </div>
             )}
-
             {allTropes.length > 0 && (
               <div>
                 <div style={{ fontSize: 13, fontWeight: 500, color: "#666", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>Tropes</div>
@@ -1191,7 +1138,6 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
                 </div>
               </div>
             )}
-
             {activeFilterCount > 0 && (
               <div onClick={() => { setSelectedTropes([]); setSelectedGenre(""); }} style={{
                 marginTop: 24, padding: "10px 0", textAlign: "center", fontSize: 13,
@@ -1531,10 +1477,10 @@ export default function App() {
   const [screen, setScreen] = useState("home");
   const [selectedBook, setSelectedBook] = useState(null);
   const [statusFilter, setStatusFilter] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchType, setSearchType] = useState("title");
   const [activeTrope, setActiveTrope] = useState(null);
   const [activeGenre, setActiveGenre] = useState(null);
+  const [exploreQuery, setExploreQuery] = useState("");
+  const [exploreSearchType, setExploreSearchType] = useState("title");
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -1575,10 +1521,11 @@ export default function App() {
     setBooks(fresh);
   };
 
-  const handleTropeClick = (trope) => { setActiveTrope(trope); setScreen("explore"); setSelectedBook(null); };
-  const handleGenreClick = (genre) => { setActiveGenre(genre); setScreen("explore"); setSelectedBook(null); };
+  const handleTropeClick = (trope) => { setActiveTrope(trope); setExploreQuery(""); setScreen("explore"); setSelectedBook(null); };
+  const handleGenreClick = (genre) => { setActiveGenre(genre); setExploreQuery(""); setScreen("explore"); setSelectedBook(null); };
+  const handleHomeSearch = (term, type) => { setExploreQuery(term); setExploreSearchType(type); setActiveTrope(null); setActiveGenre(null); setScreen("explore"); setSelectedBook(null); };
 
-  const activeTab = ["add", "detail"].includes(screen) ? "home" : screen;
+  const activeTab = ["detail"].includes(screen) ? "home" : screen;
 
   if (session === undefined) {
     return (
@@ -1601,18 +1548,23 @@ export default function App() {
         {screen === "home" && (
           <HomeScreen books={books} loading={loadingBooks}
             onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }}
-            onSearch={(term, type) => { setSearchQuery(term); setSearchType(type); setScreen("add"); }}
+            onSearch={handleHomeSearch}
             statusFilter={statusFilter} setStatusFilter={setStatusFilter}
             onGenreClick={handleGenreClick} onTropeClick={handleTropeClick}
           />
         )}
-        {screen === "add" && (
-          <AddBookScreen onBack={() => { setSearchQuery(""); setSearchType("title"); setScreen("home"); }} onSave={addBook} myBooks={books} initialQuery={searchQuery} initialSearchType={searchType} onOpenExisting={(b) => { setSelectedBook(b); setScreen("detail"); }} />
-        )}
         {screen === "detail" && selectedBook && (
           <BookDetailScreen book={selectedBook} onBack={() => setScreen("home")} onUpdate={updateBook} onDelete={deleteBook} userId={session.user.id} onTropeClick={handleTropeClick} />
         )}
-        {screen === "explore" && <ExploreScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} activeTrope={activeTrope} onTropeClick={handleTropeClick} activeGenre={activeGenre} />}
+        {screen === "explore" && (
+          <ExploreScreen books={books}
+            onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }}
+            onSave={addBook}
+            activeTrope={activeTrope} onTropeClick={handleTropeClick}
+            activeGenre={activeGenre}
+            initialQuery={exploreQuery} initialSearchType={exploreSearchType}
+          />
+        )}
         {screen === "reco" && <RecoScreen books={books} onSelectBook={(b) => { setSelectedBook(b); setScreen("detail"); }} />}
         {screen === "config" && <ConfigScreen books={books} onImportBook={importBook} session={session} supabaseClient={supabaseAuth} />}
       </div>
