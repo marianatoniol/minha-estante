@@ -614,19 +614,48 @@ function BookDetailScreen({ book, onBack, onUpdate, onDelete, userId, onTropeCli
   }, [book.googleId]);
 
   useEffect(() => {
-    if (book.genres && book.genres.length > 0) return;
     if (!book.googleId) return;
 
     (async () => {
-      const cached = await getClassificationForBook(book.googleId);
-      const genres = cached ? (cached.genres || []) : [];
-      if (genres.length > 0) {
-        onUpdate({ ...book, genres, tropes: cached.tropes || [], summary: cached.summary || "" });
+      const hasGenres = book.genres && book.genres.length > 0;
+
+      if (!hasGenres) {
+        // Case 1: no genres — run full classification
+        const cached = await getClassificationForBook(book.googleId);
+        const genres = cached?.genres || [];
+        if (genres.length > 0) {
+          onUpdate({ ...book, genres, tropes: cached.tropes || [], summary: cached.summary || "" });
+          return;
+        }
+        const result = await classifyWithAI(book.title, book.authors.join(", "), book.description);
+        await saveCanonicalBook(book.googleId, book, result);
+        onUpdate({ ...book, genres: result.genres || [], tropes: result.tropes || [], summary: result.summary || "" });
         return;
       }
-      const result = await classifyWithAI(book.title, book.authors.join(", "), book.description);
-      await saveCanonicalBook(book.googleId, book, result);
-      onUpdate({ ...book, genres: result.genres || [], tropes: result.tropes || [], summary: result.summary || "" });
+
+      // Case 2: has genres — check if books_catalog.book_id is missing
+      const { data: catalogRow } = await supabaseAuth
+        .from("books_catalog")
+        .select("book_id")
+        .eq("google_id", book.googleId)
+        .maybeSingle();
+
+      if (catalogRow?.book_id) return; // link already exists, nothing to repair
+
+      // Fetch canonical_key from books so saveCanonicalBook can resolve the conflict correctly
+      const { data: booksRow } = await supabaseAuth
+        .from("books")
+        .select("canonical_key")
+        .eq("google_id", book.googleId)
+        .maybeSingle();
+
+      await saveCanonicalBook(book.googleId, book, {
+        canonical_key: booksRow?.canonical_key || "",
+        genres: book.genres,
+        tropes: book.tropes,
+        summary: book.summary,
+      });
+      onUpdate({ ...book });
     })();
   }, [book.id]);
 
