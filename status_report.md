@@ -181,7 +181,7 @@ Configurados com Vitest. Rodar com `npm test`.
 
 ### Cobertura atual – 49 testes, todos passando
 
-> Os testes cobrem apenas funções puras em `lib/utils.js`. Componentes React (incluindo o painel inline do ExploreScreen e o BookDetailScreen) não são cobertos por testes automatizados — isso exigiria React Testing Library, que não está configurado no projeto.
+> Os testes cobrem apenas funções puras em `lib/utils.js`. As mudanças recentes (painel inline do ExploreScreen, correção do save, rating global) estão em `app/page.js` — componentes React + chamadas Supabase. Testá-las exigiria React Testing Library e mock do Supabase, que não estão configurados no projeto. Nenhum novo teste unitário foi adicionado nessa sessão porque não há lógica pura nova extraída para `lib/utils.js`.
 
 | Função | Arquivo | Testes |
 |--------|---------|--------|
@@ -201,8 +201,8 @@ Configurados com Vitest. Rodar com `npm test`.
 
 - Fluxos que dependem do Supabase (`fetchBooks`, `insertBook`, `updateBookInDb`, `updateRatingAvgInDb`, `saveCanonicalBook`) – testar manualmente
 - Fluxos que dependem da API do Claude (`classifyWithAI`, rota `/api/classify`) – testar manualmente
-- Componentes React (`HomeScreen`, `BookDetailScreen`, `ExploreScreen`, `ConfigScreen`, etc.) – não vale o esforço agora
-- Lógica de exibição de estrelas proporcionais ao `rating_avg` – inline no componente, extrair e testar só quando a lógica crescer
+- Componentes React (`HomeScreen`, `BookDetailScreen`, `ExploreScreen`, `ConfigScreen`, painel inline) – não vale o esforço agora; exigiria React Testing Library
+- Lógica de exibição de estrelas e rating global – inline no componente, extrair e testar só quando a lógica crescer
 
 ---
 
@@ -217,12 +217,13 @@ Configurados com Vitest. Rodar com `npm test`.
 ## O que ainda precisa ser testado (manualmente)
 
 - `BookDetailScreen` para livros com `books_catalog.book_id` nulo — verificar se o repair automático funciona em produção
-- Livro do catálogo com `genres` vazio no ExploreScreen — verificar se classificação + skeleton aparecem corretamente
+- Livro do catálogo com `genres` vazio no ExploreScreen — verificar se classificação + skeleton aparecem corretamente em Resumo, Gêneros e Tropes
+- Painel inline do Explorar: confirmar que capa, sinopse, páginas, rating global e tropes clicáveis aparecem para livros do catálogo
+- Salvar na estante via ExploreScreen — confirmar fix para livros do catálogo (com e sem `books_catalog.book_id`) e para livros do Google Books
 - Importação via CSV: fluxo completo, botão cancelar, mensagem de resultado (concluída vs cancelada)
 - `save_count` e `view_count` sendo incrementados corretamente em `books`
 - Rating global (`rating_avg`, `rating_count`) sendo atualizado corretamente ao mudar estrelas
-- Fluxo completo do Explorar: busca por título/autor (Google Books) → painel de adição → salvar
-- Fluxo: clicar em tag de trope/gênero → navegação para Explorar com filtro ativo
+- Fluxo: clicar em tag de trope/gênero no painel inline do Explorar → navegação para Explorar com filtro ativo
 
 ---
 
@@ -268,7 +269,9 @@ A tela Explorar é agora a central de descoberta e adição de livros do app. Co
 
 **`AddBookScreen` foi removido.** Toda a lógica de classificação, `saveCanonicalBook` e adição à estante agora vive dentro do `ExploreScreen`.
 
-**Painel inline do Explorar agora espelha o `BookDetailScreen`** com as seguintes diferenças intencionais: sem seção "Status" (livro não está na estante, `book.id` é nulo) e sem botão "Remover". O painel exibe: capa grande, título, autor, data, rating global (se disponível), skeleton durante classificação, Resumo da IA, Gêneros, Tropes clicáveis, Sinopse completa, seletor de status e botão "Salvar na estante". **Salvar na estante não está funcionando no momento** — bug a investigar.
+**Painel inline do Explorar agora espelha o `BookDetailScreen`** com as seguintes diferenças intencionais: sem seção "Status" (livro não está na estante, `book.id` é nulo) e sem botão "Remover". O painel exibe: capa grande, título, autor, data, rating global (se disponível), skeleton durante classificação, Resumo da IA, Gêneros, Tropes clicáveis, Sinopse completa, seletor de status e botão "Salvar na estante".
+
+**Salvar na estante (ExploreScreen):** `doSave` passa `selectedBookId` (o `books.id` capturado em `openCatalogBook`) diretamente para `insertBook`, evitando o lookup em `books_catalog` que falhava quando `book_id` era null. Para livros do Google Books, `selectedBookId` é null e o lookup normal em `books_catalog` é usado (depois de `saveCanonicalBook` ser chamado no open). Livros do catálogo com `genres` preenchidos nunca passavam por `saveCanonicalBook` na abertura, então o `book_id` podia estar null — corrigido passando o `id` do catálogo diretamente.
 
 ### Página do livro (BookDetailScreen)
 
@@ -296,7 +299,8 @@ A tela Explorar é agora a central de descoberta e adição de livros do app. Co
 - [x] Explorar mostra 20 mais populares por default
 - [x] CSV import para bulk-add de livros como "lido" – fluxo corrigido, `bookId` passado direto, botão cancelar, fallback de `canonical_key`
 - [x] Painel inline do Explorar reformulado — agora espelha BookDetailScreen (skeleton, resumo IA, gêneros, tropes clicáveis, sinopse, rating global)
-- [ ] Investigar e corrigir bug no "Salvar na estante" (ExploreScreen)
+- [x] Bug "Salvar na estante" corrigido — `bookId` do catálogo passado direto para `insertBook`, contornando lookup falho em `books_catalog`
+- [x] Sinopse e página corrigidas no painel inline — select do catálogo passou a incluir `description` e `page_count`
 - [ ] Remover status `lendo` da home (filtros) e de qualquer outro lugar remanescente
 - [ ] Testar e validar contadores de engajamento (`view_count`, `save_count`)
 
