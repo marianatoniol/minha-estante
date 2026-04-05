@@ -869,23 +869,36 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
   };
 
   // ── abertura de livro do catálogo ────────────────────────────────────────
-  const openCatalogBook = (catalogBook) => {
+  const openCatalogBook = async (catalogBook) => {
     const shelfBook = books.find(b => b.googleId === catalogBook.google_id);
     if (shelfBook) { onSelectBook(shelfBook); return; }
-    // livro não está na estante — mostra painel de adição
-    setSelected({
+
+    const bookObj = {
       googleId: catalogBook.google_id,
       title: catalogBook.title,
       authors: catalogBook.authors || [],
       cover: catalogBook.cover || null,
       description: "",
       pageCount: 0,
-    });
-    setClassification({
-      genres: catalogBook.genres || [],
-      tropes: catalogBook.tropes || [],
-      summary: catalogBook.summary || "",
-    });
+    };
+    setSelected(bookObj);
+
+    if (catalogBook.genres && catalogBook.genres.length > 0) {
+      setClassification({
+        genres: catalogBook.genres,
+        tropes: catalogBook.tropes || [],
+        summary: catalogBook.summary || "",
+      });
+      return;
+    }
+
+    // genres vazio — classifica com IA (skeleton aparece enquanto classification é null)
+    setClassification(null);
+    const result = await classifyWithAI(catalogBook.title, (catalogBook.authors || []).join(", "), "");
+    if (catalogBook.google_id) {
+      await saveCanonicalBook(catalogBook.google_id, bookObj, result);
+    }
+    setClassification(result);
   };
 
   const doSave = async () => {
