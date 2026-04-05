@@ -836,7 +836,7 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
         .select("rating_avg, rating_count")
         .eq("id", catalogRow.book_id)
         .maybeSingle();
-      if (bk && bk.rating_count > 0) {
+      if (bk && bk.rating_count > 0 && bk.rating_avg != null) {
         setExploreGlobalRating({ avg: bk.rating_avg, count: bk.rating_count });
       }
     })();
@@ -881,6 +881,7 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
       onSelectBook(books.find(b => b.googleId === book.googleId));
       return;
     }
+    setExploreGlobalRating(null);
     setSelected(book);
     setClassification(null);
     const cached = await getClassificationForBook(book.googleId);
@@ -894,6 +895,9 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
   const openCatalogBook = async (catalogBook) => {
     const shelfBook = books.find(b => b.googleId === catalogBook.google_id);
     if (shelfBook) { onSelectBook(shelfBook); return; }
+
+    setExploreGlobalRating(null);
+    setClassification(null);
 
     const bookObj = {
       googleId: catalogBook.google_id,
@@ -961,7 +965,7 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
             )}
             {exploreGlobalRating && (
               <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 10 }}>
-                <span style={{ fontSize: 12, color: "#666", fontWeight: 500 }}>{exploreGlobalRating.avg.toFixed(1)}</span>
+                <span style={{ fontSize: 12, color: "#666", fontWeight: 500 }}>{(exploreGlobalRating.avg ?? 0).toFixed(1)}</span>
                 <div style={{ display: "flex", gap: 1 }}>
                   {[1, 2, 3, 4, 5].map(s => (
                     <svg key={s} width={12} height={12} viewBox="0 0 24 24"
