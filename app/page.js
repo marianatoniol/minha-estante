@@ -790,6 +790,7 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
   const [classification, setClassification] = useState(null);
   const [status, setStatus] = useState("quero ler");
   const [saving, setSaving] = useState(false);
+  const [exploreGlobalRating, setExploreGlobalRating] = useState(null);
 
   // ── catálogo Supabase + filtros ───────────────────────────────────────────
   const [selectedTropes, setSelectedTropes] = useState(activeTrope ? [activeTrope] : []);
@@ -819,6 +820,27 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
   useEffect(() => {
     if (initialQuery && initialSearchType) doSearch(initialQuery, initialSearchType);
   }, []);
+
+  // rating global do livro selecionado no painel inline
+  useEffect(() => {
+    if (!selected?.googleId) { setExploreGlobalRating(null); return; }
+    (async () => {
+      const { data: catalogRow } = await supabaseAuth
+        .from("books_catalog")
+        .select("book_id")
+        .eq("google_id", selected.googleId)
+        .maybeSingle();
+      if (!catalogRow?.book_id) return;
+      const { data: bk } = await supabaseAuth
+        .from("books")
+        .select("rating_avg, rating_count")
+        .eq("id", catalogRow.book_id)
+        .maybeSingle();
+      if (bk && bk.rating_count > 0) {
+        setExploreGlobalRating({ avg: bk.rating_avg, count: bk.rating_count });
+      }
+    })();
+  }, [selected?.googleId]);
 
   // ── busca no Google Books ─────────────────────────────────────────────────
   const doSearch = async (term, type) => {
@@ -918,63 +940,99 @@ function ExploreScreen({ books, onSelectBook, activeTrope, onTropeClick, activeG
   if (selected) {
     return (
       <div style={{ paddingBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 20px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", padding: "0 20px 16px" }}>
           <svg onClick={() => setSelected(null)} width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ cursor: "pointer" }}>
             <path d="M15 18l-6-6 6-6"/>
           </svg>
-          <h1 style={{ fontSize: 20, fontWeight: 600 }}>{selected.title}</h1>
         </div>
-        <div style={{ padding: "0 20px" }}>
-          <div style={{ display: "flex", gap: 14, marginBottom: 16 }}>
-            <div style={{ width: 90, height: 135, borderRadius: 10, flexShrink: 0, background: selected.cover ? `url(${selected.cover}) center/cover` : getGradient(selected.title) }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 17, fontWeight: 600, lineHeight: 1.3 }}>{selected.title}</div>
-              <div style={{ fontSize: 13, color: "#666", marginTop: 4 }}>{selected.authors.join(", ")}</div>
-              {selected.pageCount > 0 && <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>{selected.pageCount} páginas</div>}
-            </div>
+
+        <div style={{ display: "flex", gap: 16, padding: "0 20px 20px" }}>
+          <div style={{
+            width: 110, height: 165, borderRadius: 12, flexShrink: 0,
+            background: selected.cover ? `url(${selected.cover}) center/cover` : getGradient(selected.title),
+          }} />
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <h2 style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2, marginBottom: 4 }}>{selected.title}</h2>
+            <div style={{ fontSize: 14, color: "#666" }}>{selected.authors?.join(", ")}</div>
+            {selected.publishedDate && (
+              <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>
+                {selected.publishedDate.substring(0, 4)} {selected.pageCount > 0 ? `· ${selected.pageCount} pag.` : ""}
+              </div>
+            )}
+            {exploreGlobalRating && (
+              <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 10 }}>
+                <span style={{ fontSize: 12, color: "#666", fontWeight: 500 }}>{exploreGlobalRating.avg.toFixed(1)}</span>
+                <div style={{ display: "flex", gap: 1 }}>
+                  {[1, 2, 3, 4, 5].map(s => (
+                    <svg key={s} width={12} height={12} viewBox="0 0 24 24"
+                      fill={s <= Math.round(exploreGlobalRating.avg) ? "#EF9F27" : "none"}
+                      stroke={s <= Math.round(exploreGlobalRating.avg) ? "#EF9F27" : "#ccc"}
+                      strokeWidth={1.5}>
+                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                    </svg>
+                  ))}
+                </div>
+                <span style={{ fontSize: 11, color: "#999" }}>· {exploreGlobalRating.count} {exploreGlobalRating.count === 1 ? "avaliação" : "avaliações"}</span>
+              </div>
+            )}
           </div>
-          <div style={{ padding: 14, borderRadius: 12, background: "#f5f5f5", marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: "#444" }}>
-              {classification ? "Classificação por IA" : "Classificando com IA..."}
-            </div>
+        </div>
+
+        {(classification?.summary || !classification) && (
+          <div style={{ padding: "0 20px 16px" }}>
+            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Resumo da IA</div>
+            {!classification ? <TropeSkeleton /> : (
+              <div style={{ fontSize: 13, color: "#666", lineHeight: 1.5, fontStyle: "italic", padding: "10px 14px", borderRadius: 10, background: "#f5f5f5" }}>
+                {classification.summary}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{ padding: "0 20px 16px" }}>
+          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Generos</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {!classification ? <TropeSkeleton /> : (
               <>
-                {classification.genres?.length > 0 && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                    {classification.genres.map(g => <TagPill key={g} label={g} color={GENRE_COLORS[g] || "purple"} />)}
-                  </div>
-                )}
-                {classification.tropes?.length > 0 && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                    {classification.tropes.map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} />)}
-                  </div>
-                )}
-                {classification.summary && (
-                  <div style={{ fontSize: 12, color: "#666", fontStyle: "italic", lineHeight: 1.5 }}>{classification.summary}</div>
-                )}
+                {(classification.genres || []).map(g => <TagPill key={g} label={g} color={GENRE_COLORS[g] || "purple"} />)}
+                {(!classification.genres || classification.genres.length === 0) && <span style={{ fontSize: 13, color: "#999" }}>Nenhum genero classificado</span>}
               </>
             )}
           </div>
-          {selected.description && (
-            <div style={{ fontSize: 13, color: "#666", lineHeight: 1.5, marginBottom: 16,
-              display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-              {selected.description.replace(/<[^>]*>/g, "")}
-            </div>
-          )}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Status de leitura</div>
-            <div style={{ display: "flex", gap: 8 }}>
-              {Object.entries(STATUS_LABELS).map(([key, label]) => (
-                <div key={key} onClick={() => setStatus(key)} style={{
-                  flex: 1, padding: "10px 0", borderRadius: 10, textAlign: "center",
-                  fontSize: 13, cursor: "pointer", fontWeight: status === key ? 500 : 400,
-                  background: status === key ? "#EEEDFE" : "transparent",
-                  color: status === key ? "#3C3489" : "#666",
-                  border: `0.5px solid ${status === key ? "#AFA9EC" : "#ddd"}`,
-                }}>{label}</div>
-              ))}
-            </div>
+        </div>
+
+        <div style={{ padding: "0 20px 16px" }}>
+          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Tropes</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {!classification ? <TropeSkeleton /> : (
+              (classification.tropes || []).map(t => <TagPill key={t} label={t} color={TROPE_COLORS[t] || "purple"} onClick={onTropeClick ? () => onTropeClick(t) : undefined} />)
+            )}
           </div>
+        </div>
+
+        {selected.description && (
+          <div style={{ padding: "0 20px 16px" }}>
+            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>Sinopse</div>
+            <div style={{ fontSize: 13, color: "#666", lineHeight: 1.6 }}>{selected.description.replace(/<[^>]*>/g, "")}</div>
+          </div>
+        )}
+
+        <div style={{ padding: "0 20px 16px" }}>
+          <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Status de leitura</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {Object.entries(STATUS_LABELS).map(([key, label]) => (
+              <div key={key} onClick={() => setStatus(key)} style={{
+                flex: 1, padding: "8px 0", borderRadius: 10, textAlign: "center",
+                fontSize: 13, cursor: "pointer", fontWeight: status === key ? 500 : 400,
+                background: status === key ? "#EEEDFE" : "transparent",
+                color: status === key ? "#3C3489" : "#666",
+                border: `0.5px solid ${status === key ? "#AFA9EC" : "#ddd"}`,
+              }}>{label}</div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ padding: "0 20px" }}>
           <button onClick={doSave} disabled={saving || !classification} style={{
             width: "100%", padding: "14px", borderRadius: 12, border: "none",
             background: saving || !classification ? "#AFA9EC" : "#534AB7",

@@ -181,6 +181,8 @@ Configurados com Vitest. Rodar com `npm test`.
 
 ### Cobertura atual – 49 testes, todos passando
 
+> Os testes cobrem apenas funções puras em `lib/utils.js`. Componentes React (incluindo o painel inline do ExploreScreen e o BookDetailScreen) não são cobertos por testes automatizados — isso exigiria React Testing Library, que não está configurado no projeto.
+
 | Função | Arquivo | Testes |
 |--------|---------|--------|
 | getGradient | lib/utils.js | 3 |
@@ -266,6 +268,8 @@ A tela Explorar é agora a central de descoberta e adição de livros do app. Co
 
 **`AddBookScreen` foi removido.** Toda a lógica de classificação, `saveCanonicalBook` e adição à estante agora vive dentro do `ExploreScreen`.
 
+**Painel inline do Explorar agora espelha o `BookDetailScreen`** com as seguintes diferenças intencionais: sem seção "Status" (livro não está na estante, `book.id` é nulo) e sem botão "Remover". O painel exibe: capa grande, título, autor, data, rating global (se disponível), skeleton durante classificação, Resumo da IA, Gêneros, Tropes clicáveis, Sinopse completa, seletor de status e botão "Salvar na estante". **Salvar na estante não está funcionando no momento** — bug a investigar.
+
 ### Página do livro (BookDetailScreen)
 
 - Mesma página para livros abertos pela busca ou pela estante
@@ -291,6 +295,8 @@ A tela Explorar é agora a central de descoberta e adição de livros do app. Co
 - [x] Home search vira atalho para o Explorar
 - [x] Explorar mostra 20 mais populares por default
 - [x] CSV import para bulk-add de livros como "lido" – fluxo corrigido, `bookId` passado direto, botão cancelar, fallback de `canonical_key`
+- [x] Painel inline do Explorar reformulado — agora espelha BookDetailScreen (skeleton, resumo IA, gêneros, tropes clicáveis, sinopse, rating global)
+- [ ] Investigar e corrigir bug no "Salvar na estante" (ExploreScreen)
 - [ ] Remover status `lendo` da home (filtros) e de qualquer outro lugar remanescente
 - [ ] Testar e validar contadores de engajamento (`view_count`, `save_count`)
 
