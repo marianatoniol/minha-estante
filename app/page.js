@@ -1311,7 +1311,7 @@ function ConfigScreen({ books, onImportBook, session, supabaseClient }) {
           book.summary = cl.summary || "";
 
           if (book.googleId) {
-            await saveCatalogEntry(book.googleId, book, cl);
+            await saveCanonicalBook(book.googleId, book, cl);
           }
 
           await onImportBook(book);
