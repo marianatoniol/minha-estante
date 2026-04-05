@@ -20,7 +20,7 @@
 - **Banco:** Supabase (PostgreSQL)
 - **IA – Classificação:** Claude Sonnet via `app/api/classify/route.js` (com web search habilitado)
 - **IA – Qualidade:** Claude Haiku via `app/api/quality/route.js`
-- **Busca:** Google Books API
+- **Busca:** Google Books API (título/autor) + Supabase `books` (trope/gênero)
 - **Auth:** Supabase Auth com Google OAuth
 
 ---
@@ -102,13 +102,12 @@ Criada quando o usuário salva um livro. Privada por usuário (RLS ativo).
 
 ## Fluxos Principais
 
-### Busca de livros
+### Busca de livros (tela Explorar)
 
-- Duas queries paralelas ao Google Books (`langRestrict=pt` + sem restrição), `intitle:query` ou `inauthor:query` dependendo do tipo de busca, 20 resultados cada
-- Deduplicação por `google_id` e por `book_id` (edições do mesmo livro colapsadas)
-- Filtro: livros com menos de 50 páginas são removidos
-- Score de relevância composto: match com query + quality score + engajamento (`view_count`, `save_count`)
-- Em background: livros sem `quality_checked` disparam análise via Haiku e salvam resultado em `books_catalog`
+- **Busca por título ou autor:** duas queries paralelas ao Google Books (`langRestrict=pt` + sem restrição), `intitle:query` ou `inauthor:query`, 20 resultados cada. Deduplicação por `google_id`. Filtro: livros com menos de 50 páginas removidos. Ordenação por relevância ou data de publicação.
+- **Busca por trope:** query Supabase `books.contains("tropes", [trope])`.
+- **Busca por gênero:** query Supabase `books.contains("genres", [genre])`.
+- **Default (sem busca nem filtros):** os 20 livros mais populares da tabela `books` ordenados por `save_count` decrescente.
 
 ### Abrir livro (classificação)
 
@@ -118,9 +117,9 @@ Criada quando o usuário salva um livro. Privada por usuário (RLS ativo).
 - INSERT em `books`. Se falhar com erro `23505` (canonical_key duplicada = tradução já catalogada) → reusa o id existente e adiciona `google_id` ao array `google_ids`
 - UPDATE `books_catalog.book_id` com o id obtido
 
-### Abrir livro pela busca (livro já na estante)
+### Abrir livro já na estante
 
-Se o `googleId` do livro selecionado na busca já existir em `myBooks`, `AddBookScreen` chama `onOpenExisting(livroExistente)` e navega direto pra `BookDetailScreen` – sem passar pelo fluxo de adicionar.
+Se o `googleId` do resultado selecionado já existir na estante do usuário (`myBooks`), o app navega diretamente para `BookDetailScreen` — sem passar pelo fluxo de classificação/adicionar.
 
 ### Salvar na estante
 
@@ -155,24 +154,26 @@ Clique direto na UI salva imediatamente via `updateBookInDb` (sem botão de conf
 
 Configurados com Vitest. Rodar com `npm test`.
 
-### Cobertura atual – 33 testes, todos passando
+### Cobertura atual – 35 testes, todos passando
 
 | Função | Arquivo | Testes |
 |--------|---------|--------|
 | getGradient | lib/utils.js | 3 |
 | getSimilarity | lib/utils.js | 5 |
-| filterBooks | lib/utils.js | 7 |
+| filterBooks | lib/utils.js | 9 |
 | filterByExplore | lib/utils.js | 6 |
 | buildRecommendations | lib/utils.js | 6 |
 | normalizeBookRow | lib/utils.js | 2 |
 | parseAIJson | lib/utils.js | 4 |
-| **Total** | | **33** |
+| **Total** | | **35** |
+
+> `filterByExplore` ainda está em `lib/utils.js` e coberta por testes, mesmo que a lógica equivalente no ExploreScreen seja feita via query Supabase. A função permanece útil para testes unitários isolados.
 
 ### O que não está coberto por testes automatizados
 
 - Fluxos que dependem do Supabase (`fetchBooks`, `insertBook`, `updateBookInDb`, `updateRatingAvgInDb`) – testar manualmente
 - Fluxos que dependem da API do Claude – testar manualmente
-- Componentes React (`HomeScreen`, `BookDetailScreen`, etc.) – não vale o esforço agora
+- Componentes React (`HomeScreen`, `BookDetailScreen`, `ExploreScreen`, etc.) – não vale o esforço agora
 - Lógica de exibição de estrelas proporcionais ao `rating_avg` – inline no componente, extrair e testar só quando a lógica crescer
 
 ---
@@ -191,31 +192,62 @@ Configurados com Vitest. Rodar com `npm test`.
 - `save_count` e `view_count` sendo incrementados corretamente em `books`
 - `importBook` com o novo schema
 - Rating global (`rating_avg`, `rating_count`) sendo atualizado corretamente ao mudar estrelas
+- Fluxo completo do Explorar: busca por título/autor (Google Books) → painel de adição → salvar
+- Fluxo: clicar em tag de trope/gênero → navegação para Explorar com filtro ativo
 
 ---
 
 ## UI – Comportamentos atuais
 
+### TagPill – tags clicáveis
+
+`TagPill` aceita prop `onClick`. Quando presente, a tag exibe `cursor: pointer`. Tags de **trope** são clicáveis em:
+- `BookDetailScreen` (página do livro)
+- Cards da tela Explorar
+
+Tags de **gênero** são clicáveis em:
+- Cards da `HomeScreen`
+
+Clicar numa tag navega para a tela Explorar com aquele trope ou gênero já ativo como filtro. O estado do filtro ativo (`activeTrope`, `activeGenre`) fica no componente raiz `App` e persiste ao trocar de aba e voltar.
+
+Altura mínima de 30px em todas as tags (padding `8px 10px`) para facilitar o toque em mobile.
+
 ### Campo de busca (SearchInput)
 
-O campo de busca nas telas `HomeScreen` e `AddBookScreen` exibe um dropdown com 3 opções ao digitar:
+Exibido na `HomeScreen` e na tela Explorar. Dropdown com 4 opções ao digitar:
 - 📖 como título
 - ✍️ como autor
 - ✨ como trope
+- 🏷️ como gênero
 
-Ao selecionar uma opção, a busca é disparada com o contexto certo e o dropdown fecha. Pressionar Enter busca como título por padrão. O filtro local da estante na `HomeScreen` continua funcionando enquanto digita, sem precisar selecionar uma opção.
+Pressionar Enter busca como título por padrão. O dropdown fecha ao selecionar uma opção ou pressionar Enter.
 
-Busca por autor usa `inauthor:` na query do Google Books. Busca por trope consulta a tabela `books` do Supabase via `.contains("tropes", [trope])` – retorna apenas livros já catalogados, com mensagem explicativa quando não há resultados. Busca por título mantém o comportamento anterior com `intitle:`.
+**Na HomeScreen:** buscar navega para o Explorar com o termo preenchido e a busca já disparada. A HomeScreen não tem mais tela própria de busca — o `AddBookScreen` foi removido.
+
+**No Explorar:** busca dispara no próprio campo e exibe resultados na mesma tela.
+
+### Tela Explorar (reformulada)
+
+A tela Explorar é agora a central de descoberta e adição de livros do app. Comportamentos:
+
+- **Default (sem busca/filtros):** lista os 20 livros mais populares do catálogo global (`books`, ordenados por `save_count` desc) com label "Mais populares do catálogo"
+- **Busca por título/autor:** consulta Google Books, exibe resultados com ordenação relevância/data. Livros já na estante são marcados com borda roxa e badge "✓ Na sua estante"
+- **Busca por trope/gênero:** consulta tabela `books` no Supabase via `.contains()`
+- **Drawer de filtros:** botão "Filtros" abre painel lateral com todos os gêneros e tropes disponíveis no catálogo global. Seleção múltipla. Fecha ao clicar fora. Filtros ativos mostrados como chips removíveis acima dos resultados
+- **Filtros e busca combinam:** drawer de filtros funciona em paralelo com a busca por trope/gênero
+- **Painel de adição:** clicar num livro do Google Books abre painel inline com classificação por IA, seleção de status e botão "Salvar na estante". Clicar num livro do catálogo que já está na estante abre o `BookDetailScreen`
+
+**`AddBookScreen` foi removido.** Toda a lógica de classificação, `saveCanonicalBook` e adição à estante agora vive dentro do `ExploreScreen`.
 
 ### Página do livro (BookDetailScreen)
 
 - Mesma página para livros abertos pela busca ou pela estante
 - Sem modo de edição – status e rating são clicáveis diretamente
-- Status disponíveis: quero ler e lido (removido lendo)
+- Status disponíveis: quero ler e lido
 - Seção de status só aparece se o livro estiver na estante (`book.id` presente)
 - Rating individual (estrelas do usuário) sempre clicável, salva imediatamente
 - Rating global exibido abaixo das estrelas do usuário no formato `4.2 ★★★★☆ · 12 avaliações` – só aparece se `rating_count > 0`
-- Edição de tropes removida por ora
+- Tags de trope clicáveis: navega para Explorar com filtro ativo
 
 ---
 
@@ -224,6 +256,13 @@ Busca por autor usa `inauthor:` na query do Google Books. Busca por trope consul
 ### Curto prazo
 
 - [x] Busca por autor
+- [x] Busca por trope (catálogo global)
+- [x] Busca por gênero
+- [x] Tags de trope e gênero clicáveis — navegação para Explorar com filtro ativo
+- [x] Tela Explorar reformulada — catálogo global, busca unificada, drawer de filtros, painel de adição
+- [x] AddBookScreen removido — Explorar absorveu todas as funcionalidades
+- [x] Home search vira atalho para o Explorar
+- [x] Explorar mostra 20 mais populares por default
 - [ ] CSV import para bulk-add de livros como "lido" – verificar e corrigir `importBook` com novo schema
 - [ ] Remover status `lendo` da home (filtros) e de qualquer outro lugar remanescente
 - [ ] Testar e validar contadores de engajamento (`view_count`, `save_count`)
@@ -232,14 +271,11 @@ Busca por autor usa `inauthor:` na query do Google Books. Busca por trope consul
 
 - [ ] Seleção de idioma preferido nas configurações do usuário
 - [ ] Na página do livro: mostrar edições disponíveis em outros idiomas (base já preparada com `google_ids`)
-- [ ] Filtro por tropes na tela Explorar (infraestrutura já existe)
-- [ ] Recomendações por similaridade de tropes
-- [ ] Busca por trope fora do catálogo (descoberta de livros novos)
+- [ ] Recomendações por similaridade de tropes (tela "Pra mim" já tem a lógica básica)
 
 ### Longo prazo
 
 - [ ] Score de relevância na busca usando `view_count` e `save_count` de `books` (hoje ainda usa legado de `books_catalog`)
-- [ ] Explorar / descoberta de livros fora da estante
 
 ---
 
