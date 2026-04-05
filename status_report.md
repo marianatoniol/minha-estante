@@ -18,7 +18,7 @@
 
 - **Frontend:** Next.js 14, PWA, arquivo principal `app/page.js`
 - **Banco:** Supabase (PostgreSQL)
-- **IA – Classificação:** Claude Sonnet via `app/api/classify/route.js` (com web search habilitado)
+- **IA – Classificação:** Claude Sonnet via `app/api/classify/route.js` (com web search habilitado; parsing defensivo via `safeParseAIJson`)
 - **IA – Qualidade:** Claude Haiku via `app/api/quality/route.js`
 - **Busca:** Google Books API (título/autor) + Supabase `books` (trope/gênero)
 - **Auth:** Supabase Auth com Google OAuth
@@ -82,6 +82,8 @@ Criado na primeira vez que qualquer usuário abre a página do livro. Compartilh
 
 **Deduplicação por tradução:** a IA usa web search para identificar o título original do livro e sempre gera a `canonical_key` baseada nele. Traduções do mesmo livro colapsam no mesmo registro em `books`, com seus `google_id` acumulados em `google_ids`.
 
+**Fallback de `canonical_key`:** se a IA retornar `canonical_key` vazia (falha silenciosa), o código gera automaticamente `google-id_<primeiros 8 chars do googleId>` antes de chamar `saveCanonicalBook`, evitando erro 23505 por conflito de unique constraint com string vazia.
+
 ---
 
 ### bookcase – estante pessoal
@@ -116,17 +118,39 @@ Criada quando o usuário salva um livro. Privada por usuário (RLS ativo).
 - Se não tiver → chama Sonnet com web search → gera `canonical_key` baseada no título original
 - INSERT em `books`. Se falhar com erro `23505` (canonical_key duplicada = tradução já catalogada) → reusa o id existente e adiciona `google_id` ao array `google_ids`
 - UPDATE `books_catalog.book_id` com o id obtido
+- `saveCanonicalBook` retorna o `bookId` gerado/encontrado
 
-### Abrir livro já na estante
+### Abrir livro já na estante (BookDetailScreen)
 
 Se o `googleId` do resultado selecionado já existir na estante do usuário (`myBooks`), o app navega diretamente para `BookDetailScreen` — sem passar pelo fluxo de classificação/adicionar.
 
+Ao abrir, o useEffect verifica duas condições independentes:
+
+1. **`book.genres` vazio:** busca classificação em cache (`getClassificationForBook`); se não encontrar, chama `classifyWithAI` → `saveCanonicalBook` → atualiza UI
+2. **`book.genres` preenchido mas `books_catalog.book_id` nulo:** busca `canonical_key` diretamente em `books` pelo `google_id` e re-executa `saveCanonicalBook` para reparar o vínculo quebrado; atualiza UI
+
+### Abrir livro do catálogo (ExploreScreen)
+
+Ao clicar num livro do catálogo Supabase que não está na estante:
+
+- Se `genres` preenchido: exibe painel imediatamente com dados do catálogo
+- Se `genres` vazio (classificação falhou silenciosamente no passado): exibe skeleton, chama `classifyWithAI` + `saveCanonicalBook`, preenche o painel com o resultado
+
 ### Salvar na estante
 
-- Busca `book_id` em `books_catalog` pelo `google_id`
+- `insertBook` aceita `bookId` diretamente quando já disponível (fluxo CSV); nesse caso, pula a busca em `books_catalog`
+- Se `bookId` não for fornecido (fluxo ExploreScreen/addBook), busca `book_id` em `books_catalog` pelo `google_id`
 - INSERT em `bookcase` com `{ user_id, book_id, status, rating, added_at }`
 - Erro `23505` tratado silenciosamente (livro já na estante)
 - Incrementa `books.save_count` em background
+
+### Importação via CSV (ConfigScreen)
+
+- Lê arquivo `.csv` com formato `titulo,autor` (uma linha por livro); tolera header
+- Por livro: busca no Google Books → `classifyWithAI` → valida `canonical_key` (gera fallback `google-id_<8chars>` se vazia) → `saveCanonicalBook` → captura `bookId` retornado → `insertBook` com `bookId` direto (sem lookup em `books_catalog`)
+- Intervalo de 500 ms entre livros para evitar rate limiting
+- Livros já na estante (por título normalizado) são pulados
+- **Botão "Parar importação"** visível durante o processo: ao clicar, seta flag; o loop para após terminar o livro atual. Resultado final distingue "cancelada" (âmbar) de "concluída" (verde)
 
 ### Fetch da estante
 
@@ -147,6 +171,7 @@ Clique direto na UI salva imediatamente via `updateBookInDb` (sem botão de conf
 | UNIQUE (user_id, book_id) | bookcase | Impede salvar o mesmo livro duas vezes (mesmo via tradução) |
 | RLS ativo | bookcase | Cada usuário só vê e edita sua própria estante |
 | Tratamento de erro 23505 | código | Colisões de canonical_key e bookcase tratadas graciosamente |
+| Parsing defensivo (`safeParseAIJson`) | `app/api/classify/route.js` | Se o modelo responder em prosa, extrai o primeiro bloco `{…}` válido; se falhar, retorna defaults em vez de lançar erro |
 
 ---
 
@@ -154,26 +179,27 @@ Clique direto na UI salva imediatamente via `updateBookInDb` (sem botão de conf
 
 Configurados com Vitest. Rodar com `npm test`.
 
-### Cobertura atual – 35 testes, todos passando
+### Cobertura atual – 49 testes, todos passando
 
 | Função | Arquivo | Testes |
 |--------|---------|--------|
 | getGradient | lib/utils.js | 3 |
 | getSimilarity | lib/utils.js | 5 |
-| filterBooks | lib/utils.js | 9 |
-| filterByExplore | lib/utils.js | 6 |
-| buildRecommendations | lib/utils.js | 6 |
-| normalizeBookRow | lib/utils.js | 2 |
+| filterBooks | lib/utils.js | 10 |
+| filterByExplore | lib/utils.js | 7 |
+| buildRecommendations | lib/utils.js | 8 |
+| normalizeBookRow | lib/utils.js | 3 |
 | parseAIJson | lib/utils.js | 4 |
-| **Total** | | **35** |
+| safeParseAIJson | lib/utils.js | 9 |
+| **Total** | | **49** |
 
 > `filterByExplore` ainda está em `lib/utils.js` e coberta por testes, mesmo que a lógica equivalente no ExploreScreen seja feita via query Supabase. A função permanece útil para testes unitários isolados.
 
 ### O que não está coberto por testes automatizados
 
-- Fluxos que dependem do Supabase (`fetchBooks`, `insertBook`, `updateBookInDb`, `updateRatingAvgInDb`) – testar manualmente
-- Fluxos que dependem da API do Claude – testar manualmente
-- Componentes React (`HomeScreen`, `BookDetailScreen`, `ExploreScreen`, etc.) – não vale o esforço agora
+- Fluxos que dependem do Supabase (`fetchBooks`, `insertBook`, `updateBookInDb`, `updateRatingAvgInDb`, `saveCanonicalBook`) – testar manualmente
+- Fluxos que dependem da API do Claude (`classifyWithAI`, rota `/api/classify`) – testar manualmente
+- Componentes React (`HomeScreen`, `BookDetailScreen`, `ExploreScreen`, `ConfigScreen`, etc.) – não vale o esforço agora
 - Lógica de exibição de estrelas proporcionais ao `rating_avg` – inline no componente, extrair e testar só quando a lógica crescer
 
 ---
@@ -188,9 +214,10 @@ Configurados com Vitest. Rodar com `npm test`.
 
 ## O que ainda precisa ser testado (manualmente)
 
-- `BookDetailScreen` para livros já salvos sem genres
+- `BookDetailScreen` para livros com `books_catalog.book_id` nulo — verificar se o repair automático funciona em produção
+- Livro do catálogo com `genres` vazio no ExploreScreen — verificar se classificação + skeleton aparecem corretamente
+- Importação via CSV: fluxo completo, botão cancelar, mensagem de resultado (concluída vs cancelada)
 - `save_count` e `view_count` sendo incrementados corretamente em `books`
-- `importBook` com o novo schema
 - Rating global (`rating_avg`, `rating_count`) sendo atualizado corretamente ao mudar estrelas
 - Fluxo completo do Explorar: busca por título/autor (Google Books) → painel de adição → salvar
 - Fluxo: clicar em tag de trope/gênero → navegação para Explorar com filtro ativo
@@ -263,7 +290,7 @@ A tela Explorar é agora a central de descoberta e adição de livros do app. Co
 - [x] AddBookScreen removido — Explorar absorveu todas as funcionalidades
 - [x] Home search vira atalho para o Explorar
 - [x] Explorar mostra 20 mais populares por default
-- [ ] CSV import para bulk-add de livros como "lido" – verificar e corrigir `importBook` com novo schema
+- [x] CSV import para bulk-add de livros como "lido" – fluxo corrigido, `bookId` passado direto, botão cancelar, fallback de `canonical_key`
 - [ ] Remover status `lendo` da home (filtros) e de qualquer outro lugar remanescente
 - [ ] Testar e validar contadores de engajamento (`view_count`, `save_count`)
 
